@@ -1886,7 +1886,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 		uint64_t crtcW = srcWidth / frameInfo->layers[ i ].scale.x;
 		uint64_t crtcH = srcHeight / frameInfo->layers[ i ].scale.y;
 
-		if (g_bRotated)
+		if (g_bRotated && !g_bEnableDRMRotationShader)
 		{
 			int64_t imageH = frameInfo->layers[ i ].tex->contentHeight() / frameInfo->layers[ i ].scale.y;
 
@@ -2195,9 +2195,19 @@ namespace gamescope
 
 	void CDRMConnector::UpdateEffectiveOrientation( const drmModeModeInfo *pMode )
 	{
+		auto setEffectiveOrientation = [this]( GamescopePanelOrientation eOrientation )
+		{
+			g_bEnableDRMRotationShader = g_device.vendorID() == 0x8086 // Intel
+				&& this == g_DRM.pConnector
+				&& ( eOrientation == GAMESCOPE_PANEL_ORIENTATION_90 || eOrientation == GAMESCOPE_PANEL_ORIENTATION_270 );
+			m_ChosenOrientation = g_bEnableDRMRotationShader
+				? ( eOrientation == GAMESCOPE_PANEL_ORIENTATION_270 ? GAMESCOPE_PANEL_ORIENTATION_180 : GAMESCOPE_PANEL_ORIENTATION_0 )
+				: eOrientation;
+		};
+
 		if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
 		{
-			m_ChosenOrientation = g_DesiredInternalOrientation;
+			setEffectiveOrientation( g_DesiredInternalOrientation );
 		}
 		else
 		{
@@ -2206,16 +2216,16 @@ namespace gamescope
 				switch ( this->GetProperties().panel_orientation->GetCurrentValue() )
 				{
 					case DRM_MODE_PANEL_ORIENTATION_NORMAL:
-						m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
+						setEffectiveOrientation( GAMESCOPE_PANEL_ORIENTATION_0 );
 						return;
 					case DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP:
-						m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_180;
+						setEffectiveOrientation( GAMESCOPE_PANEL_ORIENTATION_180 );
 						return;
 					case DRM_MODE_PANEL_ORIENTATION_LEFT_UP:
-						m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_90;
+						setEffectiveOrientation( GAMESCOPE_PANEL_ORIENTATION_90 );
 						return;
 					case DRM_MODE_PANEL_ORIENTATION_RIGHT_UP:
-						m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_270;
+						setEffectiveOrientation( GAMESCOPE_PANEL_ORIENTATION_270 );
 						return;
 					default:
 						break;
@@ -2225,13 +2235,13 @@ namespace gamescope
 			if ( this->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL && pMode )
 			{
 				// Auto-detect portait mode for internal displays
-				m_ChosenOrientation = pMode->hdisplay < pMode->vdisplay
+				setEffectiveOrientation( pMode->hdisplay < pMode->vdisplay
 					? GAMESCOPE_PANEL_ORIENTATION_270
-					: GAMESCOPE_PANEL_ORIENTATION_0;
+					: GAMESCOPE_PANEL_ORIENTATION_0 );
 			}
 			else
 			{
-				m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
+				setEffectiveOrientation( GAMESCOPE_PANEL_ORIENTATION_0 );
 			}
 		}
 	}
@@ -3259,6 +3269,13 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 		g_bRotated = false;
 		g_nOutputWidth = mode->hdisplay;
 		g_nOutputHeight = mode->vdisplay;
+
+		if (g_bEnableDRMRotationShader) {
+			g_bRotated = true;
+			g_nOutputWidth = mode->vdisplay;
+			g_nOutputHeight = mode->hdisplay;
+		}
+
 		break;
 	case GAMESCOPE_PANEL_ORIENTATION_90:
 	case GAMESCOPE_PANEL_ORIENTATION_270:
@@ -3523,6 +3540,11 @@ namespace gamescope
 
 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
 
+			if (g_bEnableDRMRotationShader)
+			{
+				bNeedsFullComposite = true;
+			}
+
 			bool bDoComposite = true;
 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
 			{
@@ -3618,7 +3640,7 @@ namespace gamescope
 			if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
 				g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
 
-			std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite );
+			std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite, nullptr, true, nullptr, g_bEnableDRMRotationShader );
 
 			m_bWasCompositing = true;
 
