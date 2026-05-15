@@ -2966,7 +2966,7 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 			drmCaptureFormat = vulkan_get_rgb10_capture_format();
 		else if ( path.extension() == ".png" )
 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
-		else if ( path.extension() == ".nv12.bin" )
+		else if ( path.extension() == ".bin" && path.stem().extension() == ".nv12" )
 			drmCaptureFormat = DRM_FORMAT_NV12;
 		else
 			xwm_log.errorf( "Unsupported extension for a screenshot: %s", path.extension().string().c_str() );
