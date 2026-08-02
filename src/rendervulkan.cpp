@@ -1082,9 +1082,9 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
 	return ret;
 }
 
-VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
+VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, bool fsr_simple_output)
 {
-	const std::array<VkSpecializationMapEntry, 7> specializationEntries = {{
+	const std::array<VkSpecializationMapEntry, 8> specializationEntries = {{
 		{
 			.constantID = 0,
 			.offset     = sizeof(uint32_t) * 0,
@@ -1118,8 +1118,13 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		},
 
 		{
-			.constantID = 7,
+			.constantID = 6,
 			.offset     = sizeof(uint32_t) * 6,
+			.size       = sizeof(uint32_t)
+		},
+		{
+			.constantID = 7,
+			.offset     = sizeof(uint32_t) * 7,
 			.size       = sizeof(uint32_t)
 		},
 	}};
@@ -1131,6 +1136,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		uint32_t blur_layer_count;
 		uint32_t colorspace_mask;
 		uint32_t output_eotf;
+		uint32_t fsr_simple_output;
 		uint32_t itm_enable;
 	} specializationData = {
 		.layerCount   = layerCount,
@@ -1139,6 +1145,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		.blur_layer_count = blur_layer_count,
 		.colorspace_mask = colorspace_mask,
 		.output_eotf = output_eotf,
+		.fsr_simple_output = fsr_simple_output,
 		.itm_enable = itm_enable,
 	};
 
@@ -1198,7 +1205,7 @@ void CVulkanDevice::compileAllPipelines()
 					if (blur_layers > layerCount)
 						continue;
 
-					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable);
+					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable, info.fsrSimpleOutput);
 					{
 						std::lock_guard<std::mutex> lock(m_pipelineMutex);
 						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug};
@@ -1214,18 +1221,18 @@ void CVulkanDevice::compileAllPipelines()
 
 extern bool g_bSteamIsActiveWindow;
 
-VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
+VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, bool fsr_simple_output)
 {
 	uint32_t effective_debug = g_uCompositeDebug;
 	if ( g_bSteamIsActiveWindow )
 		effective_debug &= ~(CompositeDebugFlag::Heatmap | CompositeDebugFlag::Heatmap_MSWCG | CompositeDebugFlag::Heatmap_Hard);
 
 	std::lock_guard<std::mutex> lock(m_pipelineMutex);
-	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable};
+	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable, fsr_simple_output};
 	auto search = m_pipelineMap.find(key);
 	if (search == m_pipelineMap.end())
 	{
-		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable);
+		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable, fsr_simple_output);
 		m_pipelineMap[key] = result;
 		return result;
 	}
@@ -4009,6 +4016,47 @@ extern uint32_t g_reshade_technique_idx;
 
 ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
 
+static bool is_8bit_sdr_target( const CVulkanTexture *texture )
+{
+	return texture->format() == VK_FORMAT_B8G8R8A8_UNORM ||
+	       texture->format() == VK_FORMAT_R8G8B8A8_UNORM;
+}
+
+static bool can_use_simple_fsr_output( const FrameInfo_t *frameInfo, CVulkanTexture *output, EOTF outputTF )
+{
+	if ( frameInfo->layerCount != 1 ||
+	     !frameInfo->applyOutputColorMgmt ||
+	     outputTF != EOTF_Gamma22 ||
+	     g_bHDRItmEnable ||
+	     g_uCompositeDebug != 0 ||
+	     !is_8bit_sdr_target( output ) )
+		return false;
+
+	const FrameInfo_t::Layer_t &layer = frameInfo->layers[0];
+	if ( !close_enough( layer.opacity, 1.0f ) ||
+	     !close_enough( layer.offset.x, 0.0f ) ||
+	     !close_enough( layer.offset.y, 0.0f ) ||
+	     layer.blackBorder ||
+	     layer.ctm ||
+	     layer.integerWidth() != currentOutputWidth ||
+	     layer.integerHeight() != currentOutputHeight ||
+	     output->width() != currentOutputWidth ||
+	     output->height() != currentOutputHeight )
+		return false;
+
+	if ( layer.colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR &&
+	     layer.colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB )
+		return false;
+
+	for ( uint32_t i = 0; i < EOTF_Count; i++ )
+	{
+		if ( frameInfo->shaperLut[i] || frameInfo->lut3D[i] )
+			return false;
+	}
+
+	return true;
+}
+
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer, bool applyRotation )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
@@ -4078,7 +4126,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
 
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
+		const bool simpleFsrOutput = can_use_simple_fsr_output( frameInfo, compositeImage.get(), outputTF );
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF, false, simpleFsrOutput ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTexture(0, g_output.tmpOutput);
 		cmdBuffer->setTextureSrgb(0, true);
