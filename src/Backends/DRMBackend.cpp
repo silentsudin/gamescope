@@ -3548,6 +3548,65 @@ namespace gamescope
 				}
 			}
 
+			FrameInfo_t fsrScanoutFrameInfo;
+			const FrameInfo_t::Layer_t &fsrBaseLayer = pFrameInfo->layers[0];
+			const bool bCanPreprocessFsrBase =
+				pFrameInfo->useFSRLayer0 &&
+				pFrameInfo->layerCount > 1 &&
+				!cv_composite_force &&
+				!bWasFirstFrame &&
+				!pFrameInfo->useNISLayer0 &&
+				!pFrameInfo->blurLayer0 &&
+				!pFrameInfo->bFadingOut &&
+				!g_bColorSliderInUse &&
+				!g_bHDRItmEnable &&
+				!g_bOutputHDREnabled &&
+				g_uCompositeDebug == 0 &&
+				g_reshade_effect.empty() &&
+				( k_bUseCursorPlane || !bDrewCursor ) &&
+				pFrameInfo->outputEncodingEOTF == EOTF_Gamma22 &&
+				( !pFrameInfo->applyOutputColorMgmt || SupportsColorManagement() ) &&
+				close_enough( fsrBaseLayer.opacity, 1.0f ) &&
+				( fsrBaseLayer.colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR ||
+				  fsrBaseLayer.colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB );
+
+			if ( bCanPreprocessFsrBase )
+			{
+				// Run FSR on the base plane only. Keep it in the source SDR space so
+				// KMS can apply the same per-plane color management as direct scanout.
+				FrameInfo_t fsrBaseFrameInfo = {};
+				fsrBaseFrameInfo.useFSRLayer0 = true;
+				fsrBaseFrameInfo.applyOutputColorMgmt = true;
+				fsrBaseFrameInfo.outputEncodingEOTF = EOTF_Gamma22;
+				fsrBaseFrameInfo.layerCount = 1;
+				fsrBaseFrameInfo.layers[0] = fsrBaseLayer;
+				fsrBaseFrameInfo.layers[0].ctm = nullptr;
+
+				std::optional<uint64_t> oFsrResult = vulkan_composite( &fsrBaseFrameInfo, nullptr, false );
+				if ( oFsrResult )
+				{
+					vulkan_wait( *oFsrResult, true );
+
+					fsrScanoutFrameInfo = *pFrameInfo;
+					fsrScanoutFrameInfo.useFSRLayer0 = false;
+
+					FrameInfo_t::Layer_t &scanoutBaseLayer = fsrScanoutFrameInfo.layers[0];
+					scanoutBaseLayer.tex = vulkan_get_last_output_image( false, false );
+					scanoutBaseLayer.offset = { 0.0f, 0.0f };
+					scanoutBaseLayer.scale = { 1.0f, 1.0f };
+					scanoutBaseLayer.opacity = 1.0f;
+					scanoutBaseLayer.blackBorder = false;
+					scanoutBaseLayer.filter = GamescopeUpscaleFilter::NEAREST;
+					scanoutBaseLayer.colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+					scanoutBaseLayer.eAlphaBlendingMode = ALPHA_BLENDING_MODE_NONE;
+
+					// From here, normal plane assignment can scan out the FSR result and
+					// keep compatible overlays and the cursor on hardware planes. If it
+					// fails, the compositor reuses this base without executing FSR again.
+					pFrameInfo = &fsrScanoutFrameInfo;
+				}
+			}
+
 			bool bLayer0ScreenSize = close_enough(pFrameInfo->layers[0].scale.x, 1.0f) && close_enough(pFrameInfo->layers[0].scale.y, 1.0f);
 
 			bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
@@ -4135,4 +4194,3 @@ int HackyDRMPresent( const FrameInfo_t *pFrameInfo, bool bAsync )
 {
 	return static_cast<gamescope::CDRMBackend *>( GetBackend() )->Present( pFrameInfo, bAsync );
 }
-
