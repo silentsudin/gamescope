@@ -28,7 +28,9 @@ wlroots_dep = dependency(
   'wlroots-0.18',
   version: ['>= 0.18.0', '< 0.19.0'],
   fallback: 'wlroots',
-  default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
+  # New libinput enums can produce warnings in the pinned wlroots release.
+  # Keep dependency warnings from breaking a Gamescope -Werror build.
+  default_options: ['default_library=static', 'werror=false', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
 
 displayinfo_dep = dependency(

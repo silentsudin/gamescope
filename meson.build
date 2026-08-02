@@ -19,6 +19,11 @@ add_project_arguments([
   '-DWLR_USE_UNSTABLE',
 ], language: 'cpp')
 
+cc = meson.get_compiler('c')
+# libinput can add switch values before the pinned wlroots release handles them.
+# Keep the diagnostic enabled, but do not let a cached wlroots -Werror abort builds.
+add_global_arguments(cc.get_supported_arguments('-Wno-error=switch'), language: 'c')
+
 cppc = meson.get_compiler('cpp')
 
 data_dir = get_option('datadir')
