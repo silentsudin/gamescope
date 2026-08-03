@@ -345,7 +345,7 @@ namespace gamescope
 		if ( !oCompositeResult )
 			return -EINVAL;
 
-		vulkan_present_to_window();
+		vulkan_present_to_window( pFrameInfo->frameGenerationOutputId );
 
 		// TODO: Hook up PresentationFeedback.
 

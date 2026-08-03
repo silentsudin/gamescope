@@ -291,6 +291,7 @@ struct FrameInfo_t
 
 	bool allowVRR;
 	bool frameGenerationActive = false;
+	uint64_t frameGenerationOutputId = 0;
 	bool applyOutputColorMgmt; // drm only
 	EOTF outputEncodingEOTF;
 
@@ -454,7 +455,7 @@ gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool d
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
-void vulkan_present_to_window( void );
+void vulkan_present_to_window( uint64_t frameGenerationOutputId );
 
 void vulkan_garbage_collect( void );
 bool vulkan_remake_swapchain( void );

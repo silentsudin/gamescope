@@ -2950,9 +2950,10 @@ bool acquire_next_image( void )
 
 
 static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
+static std::atomic<uint64_t> g_currentPresentFrameGenerationOutputId = {0u};
 static std::mutex present_wait_lock;
 
-extern void mangoapp_output_update( uint64_t vblanktime );
+extern void mangoapp_output_update( uint64_t vblanktime, uint64_t frameGenerationOutputId );
 static void present_wait_thread_func( void )
 {
 	uint64_t present_wait_id = 0;
@@ -2972,7 +2973,8 @@ static void present_wait_thread_func( void )
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
 				GetVBlankTimer().MarkVBlank( vblanktime, true );
-				mangoapp_output_update( vblanktime );
+				mangoapp_output_update( vblanktime,
+					g_currentPresentFrameGenerationOutputId.load() );
 			}
 		}
 	}
@@ -3010,7 +3012,7 @@ void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
 	g_device.vk.SetHdrMetadataEXT(g_device.device(), 1, &g_output.swapChain, &metadata);
 }
 
-void vulkan_present_to_window( void )
+void vulkan_present_to_window( uint64_t frameGenerationOutputId )
 {
 	static uint64_t s_lastPresentId = 0;
 
@@ -3050,6 +3052,7 @@ void vulkan_present_to_window( void )
 
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) == VK_SUCCESS )
 	{
+		g_currentPresentFrameGenerationOutputId = frameGenerationOutputId;
 		g_currentPresentWaitId = presentId;
 		g_currentPresentWaitId.notify_all();
 	}
@@ -3276,6 +3279,7 @@ bool vulkan_remake_swapchain( void )
 {
 	std::unique_lock lock(present_wait_lock);
 	g_currentPresentWaitId = 0;
+	g_currentPresentFrameGenerationOutputId = 0;
 	g_currentPresentWaitId.notify_all();
 
 	VulkanOutput_t *pOutput = &g_output;
@@ -4419,6 +4423,7 @@ namespace
 		bool generated = false;
 		bool useFSR = false;
 		std::shared_ptr<gamescope::CAcquireTimelinePoint> acquirePoint;
+		uint64_t outputId = 0;
 	};
 
 	static bool FrameGenerationSupportedFormat( VkFormat format )
@@ -4443,6 +4448,8 @@ namespace
 			m_pipelinePrimed = false;
 			m_lastSourceId = 0;
 			m_lastSourceValid = false;
+			m_currentRealSourceId = 0;
+			m_currentRealOutputId = 0;
 			m_hasHistory = false;
 			m_lastPresentedGenerated = false;
 			m_width = 0;
@@ -4557,6 +4564,7 @@ namespace
 			}
 
 			frameInfo->frameGenerationActive = true;
+			frameInfo->frameGenerationOutputId = m_currentRealOutputId;
 
 			if ( m_lastSourceValid && sourceId == m_lastSourceId )
 			{
@@ -4564,6 +4572,13 @@ namespace
 					PresentQueued( frameInfo );
 				return;
 			}
+
+			if ( sourceId != m_currentRealSourceId )
+			{
+				m_currentRealSourceId = sourceId;
+				m_currentRealOutputId = ++m_nextOutputId;
+			}
+			frameInfo->frameGenerationOutputId = m_currentRealOutputId;
 
 			if ( !CanAcceptSourceFrame() )
 			{
@@ -4614,7 +4629,8 @@ namespace
 				vulkan_frame_generation_notify_submit( sequence );
 				m_hasHistory = true;
 				m_previousReal = {
-					realLayer, false, frameInfo->useFSRLayer0, nullptr };
+					realLayer, false, frameInfo->useFSRLayer0, nullptr,
+					m_currentRealOutputId };
 				gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::WarmingUp );
 				return;
 			}
@@ -4634,8 +4650,10 @@ namespace
 			generated.generated = true;
 			generated.layer = realLayer;
 			generated.useFSR = false;
+			generated.outputId = ++m_nextOutputId;
 			FrameGenerationQueuedFrame real = {
-				realLayer, false, frameInfo->useFSRLayer0, nullptr };
+				realLayer, false, frameInfo->useFSRLayer0, nullptr,
+				m_currentRealOutputId };
 
 			const bool abDuplicate = vulkan_frame_generation_ab_enabled();
 			std::optional<uint64_t> sequence;
@@ -4957,6 +4975,7 @@ namespace
 			frameInfo->useFSRLayer0 = queued.useFSR;
 			frameInfo->useNISLayer0 = false;
 			frameInfo->frameGenerationActive = true;
+			frameInfo->frameGenerationOutputId = queued.outputId;
 			m_lastPresentedGenerated = queued.generated;
 			m_telemetry.presentedGeneratedFrames += queued.generated ? 1u : 0u;
 		}
@@ -4971,6 +4990,9 @@ namespace
 		gamescope::FrameGenerationConfig m_config;
 		gamescope::IBackendConnector *m_connector = nullptr;
 		uint64_t m_lastSourceId = 0;
+		uint64_t m_currentRealSourceId = 0;
+		uint64_t m_currentRealOutputId = 0;
+		uint64_t m_nextOutputId = 0;
 		uint32_t m_appId = 0;
 		uint32_t m_width = 0;
 		uint32_t m_height = 0;

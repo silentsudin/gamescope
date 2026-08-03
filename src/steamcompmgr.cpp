@@ -1056,7 +1056,7 @@ steamcompmgr_window_allows_frame_generation( steamcompmgr_win_t *w )
 	return w && !window_is_steam( w ) && !w->isSteamStreamingClient;
 }
 
-static bool steamcompmgr_frame_generation_enabled_for_focus()
+bool steamcompmgr_frame_generation_enabled_for_focus()
 {
 	const global_focus_t *focus = GetCurrentFocus();
 	return gamescope::GetFrameGenerationConfig().enabled && focus &&
