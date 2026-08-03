@@ -169,6 +169,9 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeLowLatency;
 
 		Atom gamescopeFSRFeedback;
+		Atom gamescopeFrameGenerationEnabled;
+		Atom gamescopeFrameGenerationFlowScale;
+		Atom gamescopeFrameGenerationFeedback;
 
 		Atom gamescopeBlurMode;
 		Atom gamescopeBlurRadius;

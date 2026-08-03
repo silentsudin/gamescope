@@ -110,6 +110,10 @@ if get_option('enable_gamescope')
   subdir('src')
 endif
 
+if get_option('enable_gamescope')
+  subdir('tests')
+endif
+
 # Handle default script/config/looks stuff
 meson.add_install_script('default_extras_install.sh')
 
