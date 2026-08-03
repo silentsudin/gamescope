@@ -421,6 +421,9 @@ void vulkan_frame_generation_apply( FrameInfo_t *frameInfo,
 bool vulkan_frame_generation_has_pending_frame();
 bool vulkan_frame_generation_is_draining();
 bool vulkan_frame_generation_can_request_source_frame();
+bool vulkan_frame_generation_can_accept_source_frame();
+bool vulkan_frame_generation_drop_stale_generated_frame(
+	uint64_t now, uint64_t deadline, uint64_t interval );
 bool vulkan_frame_generation_last_presented_generated();
 void vulkan_frame_generation_reset();
 

@@ -1051,6 +1051,19 @@ window_is_steam( steamcompmgr_win_t *w )
 }
 
 static bool
+steamcompmgr_window_allows_frame_generation( steamcompmgr_win_t *w )
+{
+	return w && !window_is_steam( w ) && !w->isSteamStreamingClient;
+}
+
+static bool steamcompmgr_frame_generation_enabled_for_focus()
+{
+	const global_focus_t *focus = GetCurrentFocus();
+	return gamescope::GetFrameGenerationConfig().enabled && focus &&
+		steamcompmgr_window_allows_frame_generation( focus->focusWindow );
+}
+
+static bool
 window_is_vr_scene_app( steamcompmgr_win_t *w )
 {
 	return w && w->appID && w->appID == g_unCurrentVRSceneAppId.load( std::memory_order_relaxed );
@@ -2788,8 +2801,9 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 	}
 
 	const gamescope::FrameGenerationConfig frameGeneration = gamescope::GetFrameGenerationConfig();
-	const bool frameGenerationEligible = frameGeneration.enabled && w &&
-		!w->isSteamStreamingClient && !fadingOut && frameInfo.layerCount > 0 &&
+	const bool frameGenerationEligible = frameGeneration.enabled &&
+		steamcompmgr_window_allows_frame_generation( w ) &&
+		!fadingOut && frameInfo.layerCount > 0 &&
 		g_HeldCommits[HELD_COMMIT_BASE] &&
 		g_HeldCommits[HELD_COMMIT_BASE]->commitID == g_uCurrentBasePlaneCommitID;
 	if ( frameGenerationEligible )
@@ -5697,7 +5711,7 @@ static std::optional<uint64_t> s_oLowestFPSLimitScheduleVRR;
 
 static bool steamcompmgr_can_latch_frame_generation_between_vblanks()
 {
-	return gamescope::GetFrameGenerationConfig().enabled;
+	return steamcompmgr_frame_generation_enabled_for_focus();
 }
 
 static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx,
@@ -5710,7 +5724,8 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 		? std::min( g_nSteamCompMgrTargetFPS, nRefreshHz ) : nRefreshHz;
 	const global_focus_t *currentFocus = GetCurrentFocus();
 	const bool frameGenerationActive = gamescope::GetFrameGenerationConfig().enabled &&
-		w && currentFocus && w == currentFocus->focusWindow;
+		steamcompmgr_window_allows_frame_generation( w ) &&
+		currentFocus && w == currentFocus->focusWindow;
 	const bool shouldLimit = frameGenerationActive ||
 		( g_nSteamCompMgrTargetFPS && ( bShouldLimitFPS || b_bForceFrameLimit ) );
 
@@ -5718,9 +5733,14 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 	{
 		const bool blocked = frameCallback
 			? !vulkan_frame_generation_can_request_source_frame()
-			: vulkan_frame_generation_is_draining();
+			: !vulkan_frame_generation_can_accept_source_frame();
 		if ( blocked )
 			return false;
+		// Source callbacks own the 60 Hz cadence. Once the midpoint drains and
+		// only its following real frame remains, latch the next source immediately
+		// so generation gets the complete interval before its output slot.
+		if ( !frameCallback )
+			return true;
 		const uint64_t schedule = w->last_commit_first_latch_time +
 			g_SteamCompMgrLimitedAppRefreshCycle;
 		static constexpr uint64_t kFrameGenerationScheduleFudge = 200'000;
@@ -7277,7 +7297,13 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 									( pCurrentFocus->focusWindow && pCurrentFocus->focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo ) )
 									&& !bMangoappSocketDisable;
 
-		bool bValidPreemptiveScale = reslistentry.pAcquirePoint && pCurrentFocus && w == pCurrentFocus->focusWindow && cv_upscale_preemptive;
+		// Frame generation must submit the midpoint before the real frame's FSR
+		// work. Preemptive scaling reverses that GPU order and consumes most of
+		// the midpoint's output slot, so let the queued real slot run its single
+		// FSR chain after generated-frame synthesis instead.
+		bool bValidPreemptiveScale = reslistentry.pAcquirePoint && pCurrentFocus &&
+			w == pCurrentFocus->focusWindow && cv_upscale_preemptive &&
+			!steamcompmgr_frame_generation_enabled_for_focus();
 		bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale();
 
 		bool bKnownReady = false;
@@ -8923,7 +8949,7 @@ steamcompmgr_main(int argc, char **argv)
 					g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
 				}
 			}
-			if ( gamescope::GetFrameGenerationConfig().enabled )
+			if ( steamcompmgr_frame_generation_enabled_for_focus() )
 			{
 				const int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
 				const int nTotalFPS = g_nSteamCompMgrTargetFPS
@@ -9106,7 +9132,8 @@ steamcompmgr_main(int argc, char **argv)
 			// for composition to finish before submitting.
 			// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.
 			const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] != nullptr && g_HeldCommits[HELD_COMMIT_BASE]->async);
-			const bool bFrameGeneration = gamescope::GetFrameGenerationConfig().enabled;
+			const bool bFrameGeneration = gamescope::GetFrameGenerationConfig().enabled &&
+				steamcompmgr_window_allows_frame_generation( pPaintFocus->focusWindow );
 			const bool bTearing = cv_tearing_enabled && GetBackend()->SupportsTearing() && bSurfaceWantsAsync;
 
 			enum class FlipType
@@ -9147,7 +9174,7 @@ steamcompmgr_main(int argc, char **argv)
 				: 0;
 			const bool frameGenerationFreeRunning = bFrameGeneration &&
 				( bVRR || eFlipType == FlipType::Async );
-			const bool frameGenerationPending =
+			bool frameGenerationPending =
 				vulkan_frame_generation_has_pending_frame();
 			const uint64_t frameGenerationNow = get_time_in_nanos();
 
@@ -9168,6 +9195,14 @@ steamcompmgr_main(int argc, char **argv)
 
 			const bool frameGenerationTimerOutputDue = frameGenerationFreeRunning &&
 				frameGenerationPending && s_bFrameGenerationOutputTimerDue;
+
+			if ( frameGenerationTimerOutputDue &&
+				vulkan_frame_generation_drop_stale_generated_frame(
+					frameGenerationNow, s_uFrameGenerationOutputDeadline,
+					frameGenerationOutputInterval ) )
+			{
+				frameGenerationPending = vulkan_frame_generation_has_pending_frame();
+			}
 
 			bool bShouldPaint = false;
 
