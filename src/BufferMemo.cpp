@@ -31,7 +31,13 @@ namespace gamescope
 
     void CBufferMemo::OnBufferDestroyed( void *pUserData )
     {
-        assert( m_pVulkanTexture->GetRefCount() == 0 );
+        // A consumer may still be using the imported texture after the client
+        // destroys its wl_buffer. Frame generation does this while draining
+        // queued real frames during application teardown.
+        //
+        // Unmemoizing only releases our private cache reference. Public
+        // references keep the texture, its imported DMA-BUF memory, and its
+        // backend framebuffer alive until the consumer is finished.
         m_pMemoizer->UnmemoizeBuffer( m_pBuffer );
     }
 
