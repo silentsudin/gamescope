@@ -118,6 +118,8 @@ namespace gamescope
         // but don't want to expose HDR there as it is not good.
         bool bExposeHDRSupport = false;
         bool bAlwaysPatchEdid = false;
+        // Panel ignores hardware backlight control in PQ, follow it in software.
+        bool bSoftwareBacklight = false;
 
         // The output encoding to use for HDR output.
         // For typical HDR10 displays, this will be PQ.
