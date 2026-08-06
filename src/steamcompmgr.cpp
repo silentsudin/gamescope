@@ -6219,7 +6219,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeFrameGenerationFlowScale )
 	{
 		gamescope::SetFrameGenerationFlowScale(
-			get_prop( ctx, ctx->root, ctx->atoms.gamescopeFrameGenerationFlowScale, 100 ) );
+			get_prop( ctx, ctx->root, ctx->atoms.gamescopeFrameGenerationFlowScale, 75 ) );
 		hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )

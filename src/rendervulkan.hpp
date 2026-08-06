@@ -466,7 +466,7 @@ struct FrameGenerationTelemetry
 	uint64_t sceneCutCopies = 0;
 	double sourceFrameIntervalMilliseconds = 0.0;
 	uint32_t queuedFrames = 0;
-	uint32_t flowScalePercent = 100;
+	uint32_t flowScalePercent = 75;
 	uint32_t sourceCadenceHz = 0;
 	uint32_t outputCadenceHz = 0;
 };
