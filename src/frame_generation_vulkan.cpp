@@ -41,6 +41,9 @@ gamescope::ConVar<bool> cv_frame_generation_debug_gui(
 gamescope::ConVar<bool> cv_frame_generation_dot_product_of(
 	"frame_generation_dot_product_of", true,
 	"Use accelerated integer dot products for FidelityFX optical-flow SAD when supported." );
+gamescope::ConVar<bool> cv_frame_generation_direct_output(
+	"frame_generation_direct_output", true,
+	"Write SDR frame-generation inpainting directly into its scanout image." );
 
 namespace
 {
@@ -835,20 +838,27 @@ namespace
 		}
 
 		gamescope::Rc<CVulkanTexture> RecordInterpolation( CVulkanCmdBuffer *cmdBuffer,
-			gamescope::Rc<CVulkanTexture> previous, gamescope::Rc<CVulkanTexture> current, bool reset )
+			gamescope::Rc<CVulkanTexture> previous, gamescope::Rc<CVulkanTexture> current, bool reset,
+			gamescope::Rc<CVulkanTexture> finalOutput )
 		{
 			if ( !cmdBuffer || !resources || recordedResources != resources || !previous || !current ||
 				 previous->isYcbcr() || current->isYcbcr() ||
 				 previous->width() != resources->sourceExtent.width || previous->height() != resources->sourceExtent.height ||
-				 current->width() != resources->sourceExtent.width || current->height() != resources->sourceExtent.height )
+				 current->width() != resources->sourceExtent.width || current->height() != resources->sourceExtent.height ||
+				 ( finalOutput && ( finalOutput->isYcbcr() ||
+					 finalOutput->width() != resources->sourceExtent.width ||
+					 finalOutput->height() != resources->sourceExtent.height ) ) )
 				return nullptr;
 
 			cmdBuffer->bindTexture( 1, previous );
 			cmdBuffer->bindTexture( 2, current );
 			cmdBuffer->prepareSrcImage( previous.get() );
 			cmdBuffer->prepareSrcImage( current.get() );
-			cmdBuffer->bindTarget( resources->midpoint );
-			cmdBuffer->prepareDestImage( resources->midpoint.get() );
+			gamescope::Rc<CVulkanTexture> interpolationOutput = finalOutput;
+			if ( !interpolationOutput )
+				interpolationOutput = resources->midpoint;
+			cmdBuffer->bindTarget( interpolationOutput );
+			cmdBuffer->prepareDestImage( interpolationOutput.get() );
 			cmdBuffer->insertBarrier();
 
 			const VkClearColorValue zero = {};
@@ -932,7 +942,7 @@ namespace
 
 			if ( !Dispatch( cmdBuffer->rawBuffer(), resources->midpointPass, {
 				Sampled( resources->vectorFieldX ), Sampled( resources->vectorFieldY ), Sampled( previous->srgbView() ),
-				Sampled( current->srgbView() ), Sampled( resources->scdOutput ), StorageView( resources->midpoint->srgbView() ),
+				Sampled( current->srgbView() ), Sampled( resources->scdOutput ), StorageView( interpolationOutput->srgbView() ),
 				fiConstants, StorageBuffer( resources->telemetryCounters ),
 				Sampled( resources->guiMask[guiMaskIndex] ),
 				Sampler( resources->linearSampler ),
@@ -952,7 +962,7 @@ namespace
 			};
 			const Descriptor fiSpdConstants = Upload( spdConstants );
 			std::vector<Descriptor> inpaintingPyramidBindings = {
-				Sampled( resources->midpoint->srgbView() ), StorageBuffer( resources->counters ),
+				Sampled( interpolationOutput->srgbView() ), StorageBuffer( resources->counters ),
 			};
 			for ( uint32_t level = 0; level < 13; ++level )
 				inpaintingPyramidBindings.push_back( StorageView( resources->inpaintingPyramid.mipViews[
@@ -968,14 +978,14 @@ namespace
 
 			if ( !Dispatch( cmdBuffer->rawBuffer(), resources->inpaintingPass, {
 				Sampled( resources->scdOutput ), Sampled( resources->inpaintingPyramid ), Sampled( current->srgbView() ),
-				Sampled( current->srgbView() ), StorageView( resources->midpoint->srgbView() ), fiConstants,
+				Sampled( current->srgbView() ), StorageView( interpolationOutput->srgbView() ), fiConstants,
 				Sampler( resources->linearSampler ),
 			}, ( resources->sourceExtent.width + 7 ) / 8, ( resources->sourceExtent.height + 7 ) / 8 ) )
 				return nullptr;
 			WriteTimestamp( cmdBuffer->rawBuffer(), kTimingQueryInpainting );
 
-			cmdBuffer->markDirty( resources->midpoint.get() );
-			return resources->midpoint;
+			cmdBuffer->markDirty( interpolationOutput.get() );
+			return interpolationOutput;
 		}
 
 		void RecordOutputTimestamp( CVulkanCmdBuffer *cmdBuffer, bool usedFsr )
@@ -1262,10 +1272,12 @@ gamescope::Rc<CVulkanTexture> vulkan_frame_generation_record_interpolation(
 	CVulkanCmdBuffer *cmdBuffer,
 	gamescope::Rc<CVulkanTexture> previous,
 	gamescope::Rc<CVulkanTexture> current,
-	bool reset )
+	bool reset,
+	gamescope::Rc<CVulkanTexture> finalOutput )
 {
 	return GetOpticalFlowContext().RecordInterpolation(
-		cmdBuffer, std::move( previous ), std::move( current ), reset );
+		cmdBuffer, std::move( previous ), std::move( current ), reset,
+		std::move( finalOutput ) );
 }
 
 void vulkan_frame_generation_notify_submit( uint64_t sequence )
@@ -1286,6 +1298,11 @@ void vulkan_frame_generation_reset_optical_flow()
 bool vulkan_frame_generation_ab_enabled()
 {
 	return cv_frame_generation_ab;
+}
+
+bool vulkan_frame_generation_direct_output_enabled()
+{
+	return cv_frame_generation_direct_output;
 }
 
 void vulkan_frame_generation_record_output_timestamp(

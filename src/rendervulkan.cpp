@@ -4681,9 +4681,25 @@ namespace
 				return;
 			}
 
+			const bool abDuplicate = vulkan_frame_generation_ab_enabled();
+			const bool directOutput =
+				!abDuplicate && !fsrEnabled && !ColorspaceIsHDR( realLayer.colorspace ) &&
+				vulkan_frame_generation_direct_output_enabled();
+			gamescope::Rc<CVulkanTexture> scanout;
+			if ( directOutput )
+			{
+				scanout = AcquireScanout(
+					rawSource->width(), rawSource->height(), rawSource->drmFormat() );
+				if ( !scanout )
+				{
+					gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
+					return;
+				}
+			}
+
 			gamescope::Rc<CVulkanTexture> midpoint =
 				vulkan_frame_generation_record_interpolation(
-					cmdBuffer.get(), m_history, rawSource, false );
+					cmdBuffer.get(), m_history, rawSource, false, scanout );
 			if ( !midpoint )
 			{
 				gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
@@ -4701,7 +4717,6 @@ namespace
 				realLayer, false, frameInfo->useFSRLayer0, nullptr,
 				m_currentRealOutputId };
 
-			const bool abDuplicate = vulkan_frame_generation_ab_enabled();
 			std::optional<uint64_t> sequence;
 			if ( abDuplicate )
 			{
@@ -4717,8 +4732,8 @@ namespace
 					? ( realLayer.tex->drmFormat() != DRM_FORMAT_INVALID
 						? realLayer.tex->drmFormat() : g_output.uOutputFormat )
 					: rawSource->drmFormat();
-				gamescope::Rc<CVulkanTexture> scanout = AcquireScanout(
-					outputWidth, outputHeight, outputFormat );
+				if ( !scanout )
+					scanout = AcquireScanout( outputWidth, outputHeight, outputFormat );
 				if ( !scanout )
 				{
 					gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
@@ -4806,8 +4821,16 @@ namespace
 				generated.acquirePoint = std::make_shared<gamescope::CAcquireTimelinePoint>(
 					m_completionTimeline, completionPoint );
 
-				sequence = vulkan_composite( &generatedFrame, nullptr, false, scanout,
-					false, std::move( cmdBuffer ), false, fsrIntermediate );
+				if ( directOutput )
+				{
+					vulkan_frame_generation_record_output_timestamp( cmdBuffer.get(), false );
+					sequence = g_device.submit( std::move( cmdBuffer ) );
+				}
+				else
+				{
+					sequence = vulkan_composite( &generatedFrame, nullptr, false, scanout,
+						false, std::move( cmdBuffer ), false, fsrIntermediate );
+				}
 				if ( !sequence )
 				{
 					gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
