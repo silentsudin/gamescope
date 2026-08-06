@@ -1056,6 +1056,20 @@ steamcompmgr_window_allows_frame_generation( steamcompmgr_win_t *w )
 	return w && !window_is_steam( w ) && !w->isSteamStreamingClient;
 }
 
+static bool
+steamcompmgr_window_is_active_frame_generation_overlay( steamcompmgr_win_t *w )
+{
+	const global_focus_t *focus = GetCurrentFocus();
+	if ( !w || !focus || !gamescope::GetFrameGenerationConfig().enabled ||
+		 !steamcompmgr_window_allows_frame_generation( focus->focusWindow ) ||
+		 focus->inputFocusWindow != w || focus->focusWindow == w )
+		return false;
+
+	return
+		( focus->overlayWindow == w && w->opacity ) ||
+		( focus->externalOverlayWindow == w && w->opacity );
+}
+
 bool steamcompmgr_frame_generation_enabled_for_focus()
 {
 	const global_focus_t *focus = GetCurrentFocus();
@@ -5726,7 +5740,10 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 	const bool frameGenerationActive = gamescope::GetFrameGenerationConfig().enabled &&
 		steamcompmgr_window_allows_frame_generation( w ) &&
 		currentFocus && w == currentFocus->focusWindow;
+	const bool frameGenerationOverlayActive =
+		steamcompmgr_window_is_active_frame_generation_overlay( w );
 	const bool shouldLimit = frameGenerationActive ||
+		frameGenerationOverlayActive ||
 		( g_nSteamCompMgrTargetFPS && ( bShouldLimitFPS || b_bForceFrameLimit ) );
 
 	if ( frameGenerationActive && w )
@@ -5757,6 +5774,11 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 			return false;
 		}
 		return true;
+	}
+	if ( frameGenerationOverlayActive )
+	{
+		return gamescope::FrameGenerationSourceSlotDue(
+			vblank_idx, uint64_t( nTargetFPS ), uint64_t( nRefreshHz ) );
 	}
 
 	if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
@@ -6917,7 +6939,6 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
 	{
-		bool entry_vblank = vblank || steamcompmgr_can_latch_frame_generation_between_vblanks();
 		steamcompmgr_win_t *entry_window = nullptr;
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
 		{
@@ -6927,11 +6948,17 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 				break;
 			}
 		}
-		entry_vblank = entry_vblank && ( entry_window
+		const bool frameGenerationOverlay =
+			steamcompmgr_window_is_active_frame_generation_overlay( entry_window );
+		const bool fifoPaced = entry.fifo || frameGenerationOverlay;
+		const bool entry_vblank =
+			( vblank || ( !frameGenerationOverlay &&
+			  steamcompmgr_can_latch_frame_generation_between_vblanks() ) ) &&
+			( entry_window
 			? steamcompmgr_should_vblank_window( true, vblank_idx, entry_window, now )
 			: steamcompmgr_should_vblank_window( true, vblank_idx ) );
 
-		if (entry.fifo && (!entry_vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		if ( fifoPaced && ( !entry_vblank || fifo_win_seqs.count( entry.winSeq ) > 0 ) )
 		{
 			commits_before_their_time.push_back( entry );
 			continue;
@@ -6955,7 +6982,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 				continue;
 			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
 			{
-				if (entry.fifo)
+				if ( fifoPaced )
 					fifo_win_seqs.insert(entry.winSeq);
 				break;
 			}
@@ -6995,13 +7022,17 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 				break;
 			}
 		}
+		const bool frameGenerationOverlay =
+			steamcompmgr_window_is_active_frame_generation_overlay( entry_window );
+		const bool fifoPaced = entry.fifo || frameGenerationOverlay;
 		const bool entry_vblank =
-			( vblank || steamcompmgr_can_latch_frame_generation_between_vblanks() ) &&
+			( vblank || ( !frameGenerationOverlay &&
+			  steamcompmgr_can_latch_frame_generation_between_vblanks() ) ) &&
 			( entry_window
 				? steamcompmgr_should_vblank_window( true, vblank_idx, entry_window, now )
 				: steamcompmgr_should_vblank_window( true, vblank_idx ) );
 
-		if (entry.fifo && (!entry_vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		if ( fifoPaced && ( !entry_vblank || fifo_win_seqs.count( entry.winSeq ) > 0 ) )
 		{
 			commits_before_their_time.push_back( entry );
 			continue;
@@ -7025,7 +7056,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 				continue;
 			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
 			{
-				if (entry.fifo)
+				if ( fifoPaced )
 					fifo_win_seqs.insert(entry.winSeq);
 				break;
 			}
@@ -7043,7 +7074,10 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
-	uint64_t refresh_cycle = g_nSteamCompMgrTargetFPS && (steamcompmgr_window_should_limit_fps( w ) || b_bForceFrameLimit)
+	const bool frameGenerationOverlay =
+		steamcompmgr_window_is_active_frame_generation_overlay( w );
+	uint64_t refresh_cycle = frameGenerationOverlay ||
+		( g_nSteamCompMgrTargetFPS && ( steamcompmgr_window_should_limit_fps( w ) || b_bForceFrameLimit ) )
 		? g_SteamCompMgrLimitedAppRefreshCycle
 		: g_SteamCompMgrAppRefreshCycle;
 
