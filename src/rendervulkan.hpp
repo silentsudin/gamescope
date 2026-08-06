@@ -441,15 +441,27 @@ struct FrameGenerationGpuTimings
 struct FrameGenerationTelemetry
 {
 	FrameGenerationGpuTimings gpu;
+	uint64_t sourceFrames = 0;
+	uint64_t sourceCallbacks = 0;
+	uint64_t sourceCallbacksBlocked = 0;
+	uint64_t outputSlots = 0;
+	uint64_t outputSlotsWithoutPending = 0;
+	uint64_t queueUnderruns = 0;
+	uint64_t repeatedRealFrames = 0;
 	uint64_t generatedFrames = 0;
 	uint64_t presentedGeneratedFrames = 0;
+	uint64_t presentedRealFrames = 0;
 	uint64_t deadlineDroppedFrames = 0;
 	uint64_t sceneCutCopies = 0;
+	double sourceFrameIntervalMilliseconds = 0.0;
+	uint32_t queuedFrames = 0;
 	uint32_t flowScalePercent = 100;
 	uint32_t sourceCadenceHz = 0;
 	uint32_t outputCadenceHz = 0;
 };
 FrameGenerationTelemetry vulkan_frame_generation_get_telemetry();
+void vulkan_frame_generation_note_source_callback( bool blocked );
+void vulkan_frame_generation_note_output_slot( bool hasPendingFrame );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);

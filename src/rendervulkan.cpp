@@ -4468,6 +4468,7 @@ namespace
 			m_lastSourceValid = false;
 			m_currentRealSourceId = 0;
 			m_currentRealOutputId = 0;
+			m_lastSourceFrameTime = 0;
 			m_hasHistory = false;
 			m_lastPresentedGenerated = false;
 			m_width = 0;
@@ -4529,8 +4530,24 @@ namespace
 			FrameGenerationTelemetry result = m_telemetry;
 			result.gpu = vulkan_frame_generation_get_gpu_timings();
 			result.sceneCutCopies = vulkan_frame_generation_get_scene_cut_copy_count();
+			result.queuedFrames = uint32_t( m_queue.size() );
 			result.flowScalePercent = m_config.flowScalePercent;
 			return result;
+		}
+
+		void NoteSourceCallback( bool blocked )
+		{
+			if ( blocked )
+				m_telemetry.sourceCallbacksBlocked++;
+			else
+				m_telemetry.sourceCallbacks++;
+		}
+
+		void NoteOutputSlot( bool hasPendingFrame )
+		{
+			m_telemetry.outputSlots++;
+			if ( !hasPendingFrame )
+				m_telemetry.outputSlotsWithoutPending++;
 		}
 
 		void Apply( FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> rawSource,
@@ -4619,7 +4636,10 @@ namespace
 			// previous real frame again so the next midpoint still gets one full
 			// source interval instead of racing its first output deadline.
 			if ( m_pipelinePrimed && m_queue.empty() )
+			{
 				m_pipelinePrimed = false;
+				m_telemetry.queueUnderruns++;
+			}
 
 			if ( !m_history && !AllocateHistory( rawSource ) )
 			{
@@ -4639,6 +4659,14 @@ namespace
 
 			m_lastSourceId = sourceId;
 			m_lastSourceValid = true;
+			m_telemetry.sourceFrames++;
+			const uint64_t sourceFrameTime = get_time_in_nanos();
+			if ( m_lastSourceFrameTime != 0 && sourceFrameTime >= m_lastSourceFrameTime )
+			{
+				m_telemetry.sourceFrameIntervalMilliseconds =
+					double( sourceFrameTime - m_lastSourceFrameTime ) / 1'000'000.0;
+			}
+			m_lastSourceFrameTime = sourceFrameTime;
 
 			if ( !m_hasHistory )
 			{
@@ -4865,6 +4893,7 @@ namespace
 			{
 				m_queue.push_back( m_previousReal );
 				m_pipelinePrimed = true;
+				m_telemetry.repeatedRealFrames++;
 			}
 			m_queue.push_back( std::move( generated ) );
 			m_previousReal = real;
@@ -4996,6 +5025,7 @@ namespace
 			frameInfo->frameGenerationOutputId = queued.outputId;
 			m_lastPresentedGenerated = queued.generated;
 			m_telemetry.presentedGeneratedFrames += queued.generated ? 1u : 0u;
+			m_telemetry.presentedRealFrames += queued.generated ? 0u : 1u;
 		}
 
 		gamescope::OwningRc<CVulkanTexture> m_history;
@@ -5011,6 +5041,7 @@ namespace
 		uint64_t m_currentRealSourceId = 0;
 		uint64_t m_currentRealOutputId = 0;
 		uint64_t m_nextOutputId = 0;
+		uint64_t m_lastSourceFrameTime = 0;
 		uint32_t m_appId = 0;
 		uint32_t m_width = 0;
 		uint32_t m_height = 0;
@@ -5086,6 +5117,16 @@ void vulkan_frame_generation_reset()
 FrameGenerationTelemetry vulkan_frame_generation_get_telemetry()
 {
 	return s_frameGenerationPacingContext.Telemetry();
+}
+
+void vulkan_frame_generation_note_source_callback( bool blocked )
+{
+	s_frameGenerationPacingContext.NoteSourceCallback( blocked );
+}
+
+void vulkan_frame_generation_note_output_slot( bool hasPendingFrame )
+{
+	s_frameGenerationPacingContext.NoteOutputSlot( hasPendingFrame );
 }
 
 void vulkan_wait( uint64_t ulSeqNo, bool bReset )

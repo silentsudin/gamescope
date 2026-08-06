@@ -2566,10 +2566,20 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 		stats_printf( "framegen_fi_interpolation_gpu_ms=%f\n", frameGenerationTelemetry.gpu.interpolationAndInpaintingMilliseconds );
 		stats_printf( "framegen_generated_fsr_gpu_ms=%f\n", frameGenerationTelemetry.gpu.generatedFsrMilliseconds );
 		stats_printf( "framegen_total_gpu_ms=%f\n", frameGenerationTelemetry.gpu.totalMilliseconds );
+		stats_printf( "framegen_source_frames=%" PRIu64 "\n", frameGenerationTelemetry.sourceFrames );
+		stats_printf( "framegen_source_callbacks=%" PRIu64 "\n", frameGenerationTelemetry.sourceCallbacks );
+		stats_printf( "framegen_source_callbacks_blocked=%" PRIu64 "\n", frameGenerationTelemetry.sourceCallbacksBlocked );
+		stats_printf( "framegen_output_slots=%" PRIu64 "\n", frameGenerationTelemetry.outputSlots );
+		stats_printf( "framegen_output_slots_without_pending=%" PRIu64 "\n", frameGenerationTelemetry.outputSlotsWithoutPending );
+		stats_printf( "framegen_queue_underruns=%" PRIu64 "\n", frameGenerationTelemetry.queueUnderruns );
+		stats_printf( "framegen_repeated_real=%" PRIu64 "\n", frameGenerationTelemetry.repeatedRealFrames );
 		stats_printf( "framegen_generated=%" PRIu64 "\n", frameGenerationTelemetry.generatedFrames );
 		stats_printf( "framegen_presented=%" PRIu64 "\n", frameGenerationTelemetry.presentedGeneratedFrames );
+		stats_printf( "framegen_presented_real=%" PRIu64 "\n", frameGenerationTelemetry.presentedRealFrames );
 		stats_printf( "framegen_deadline_dropped=%" PRIu64 "\n", frameGenerationTelemetry.deadlineDroppedFrames );
 		stats_printf( "framegen_scene_cut_copies=%" PRIu64 "\n", frameGenerationTelemetry.sceneCutCopies );
+		stats_printf( "framegen_source_interval_ms=%f\n", frameGenerationTelemetry.sourceFrameIntervalMilliseconds );
+		stats_printf( "framegen_queue_depth=%u\n", frameGenerationTelemetry.queuedFrames );
 		stats_printf( "framegen_flow_scale_percent=%u\n", frameGenerationTelemetry.flowScalePercent );
 		stats_printf( "framegen_source_cadence_hz=%u\n", frameGenerationTelemetry.sourceCadenceHz );
 		stats_printf( "framegen_output_cadence_hz=%u\n", frameGenerationTelemetry.outputCadenceHz );
@@ -5752,7 +5762,11 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 			? !vulkan_frame_generation_can_request_source_frame()
 			: !vulkan_frame_generation_can_accept_source_frame();
 		if ( blocked )
+		{
+			if ( frameCallback )
+				vulkan_frame_generation_note_source_callback( true );
 			return false;
+		}
 		// Source callbacks own the 60 Hz cadence. Once the midpoint drains and
 		// only its following real frame remains, latch the next source immediately
 		// so generation gets the complete interval before its output slot.
@@ -5773,6 +5787,8 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 			}
 			return false;
 		}
+		if ( frameCallback )
+			vulkan_frame_generation_note_source_callback( false );
 		return true;
 	}
 	if ( frameGenerationOverlayActive )
@@ -9229,6 +9245,12 @@ steamcompmgr_main(int argc, char **argv)
 
 			const bool frameGenerationTimerOutputDue = frameGenerationFreeRunning &&
 				frameGenerationPending && s_bFrameGenerationOutputTimerDue;
+			const bool frameGenerationVblankOutputDue = bFrameGeneration &&
+				!frameGenerationFreeRunning && vblank &&
+				gamescope::FrameGenerationOutputSlotDue(
+					vblank_idx, frameGenerationOutputFPS, frameGenerationRefreshHz );
+			if ( frameGenerationVblankOutputDue )
+				vulkan_frame_generation_note_output_slot( frameGenerationPending );
 
 			if ( frameGenerationTimerOutputDue &&
 				vulkan_frame_generation_drop_stale_generated_frame(
@@ -9305,8 +9327,7 @@ steamcompmgr_main(int argc, char **argv)
 				if ( frameGenerationFreeRunning )
 					bShouldPaint = frameGenerationTimerOutputDue;
 				else if ( vblank )
-					bShouldPaint = gamescope::FrameGenerationOutputSlotDue(
-						vblank_idx, frameGenerationOutputFPS, frameGenerationRefreshHz );
+					bShouldPaint = frameGenerationVblankOutputDue;
 				else
 					bShouldPaint = false;
 
