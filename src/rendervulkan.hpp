@@ -430,6 +430,17 @@ void vulkan_frame_generation_reset();
 
 struct FrameGenerationGpuTimings
 {
+	double prepareLumaMilliseconds = 0.0;
+	double luminancePyramidMilliseconds = 0.0;
+	double sceneChangeMilliseconds = 0.0;
+	double opticalFlowSearchMilliseconds = 0.0;
+	double opticalFlowFilterMilliseconds = 0.0;
+	double opticalFlowScaleMilliseconds = 0.0;
+	double guiMaskMilliseconds = 0.0;
+	double midpointMilliseconds = 0.0;
+	double inpaintingPyramidMilliseconds = 0.0;
+	double inpaintingMilliseconds = 0.0;
+	double outputCompositeMilliseconds = 0.0;
 	double preparationAndPyramidMilliseconds = 0.0;
 	double searchAndFilterMilliseconds = 0.0;
 	double vectorFieldMilliseconds = 0.0;

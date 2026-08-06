@@ -2566,6 +2566,17 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 		stats_printf( "framegen_fi_interpolation_gpu_ms=%f\n", frameGenerationTelemetry.gpu.interpolationAndInpaintingMilliseconds );
 		stats_printf( "framegen_generated_fsr_gpu_ms=%f\n", frameGenerationTelemetry.gpu.generatedFsrMilliseconds );
 		stats_printf( "framegen_total_gpu_ms=%f\n", frameGenerationTelemetry.gpu.totalMilliseconds );
+		stats_printf( "framegen_prepare_luma_gpu_ms=%f\n", frameGenerationTelemetry.gpu.prepareLumaMilliseconds );
+		stats_printf( "framegen_luma_pyramid_gpu_ms=%f\n", frameGenerationTelemetry.gpu.luminancePyramidMilliseconds );
+		stats_printf( "framegen_scene_change_gpu_ms=%f\n", frameGenerationTelemetry.gpu.sceneChangeMilliseconds );
+		stats_printf( "framegen_of_search_gpu_ms=%f\n", frameGenerationTelemetry.gpu.opticalFlowSearchMilliseconds );
+		stats_printf( "framegen_of_filter_gpu_ms=%f\n", frameGenerationTelemetry.gpu.opticalFlowFilterMilliseconds );
+		stats_printf( "framegen_of_scale_gpu_ms=%f\n", frameGenerationTelemetry.gpu.opticalFlowScaleMilliseconds );
+		stats_printf( "framegen_gui_mask_gpu_ms=%f\n", frameGenerationTelemetry.gpu.guiMaskMilliseconds );
+		stats_printf( "framegen_midpoint_gpu_ms=%f\n", frameGenerationTelemetry.gpu.midpointMilliseconds );
+		stats_printf( "framegen_inpainting_pyramid_gpu_ms=%f\n", frameGenerationTelemetry.gpu.inpaintingPyramidMilliseconds );
+		stats_printf( "framegen_inpainting_gpu_ms=%f\n", frameGenerationTelemetry.gpu.inpaintingMilliseconds );
+		stats_printf( "framegen_output_composite_gpu_ms=%f\n", frameGenerationTelemetry.gpu.outputCompositeMilliseconds );
 		stats_printf( "framegen_source_frames=%" PRIu64 "\n", frameGenerationTelemetry.sourceFrames );
 		stats_printf( "framegen_source_callbacks=%" PRIu64 "\n", frameGenerationTelemetry.sourceCallbacks );
 		stats_printf( "framegen_source_callbacks_blocked=%" PRIu64 "\n", frameGenerationTelemetry.sourceCallbacksBlocked );
