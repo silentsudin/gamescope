@@ -9250,7 +9250,11 @@ steamcompmgr_main(int argc, char **argv)
 				: 0;
 			const bool frameGenerationFreeRunning = bFrameGeneration &&
 				( bVRR || eFlipType == FlipType::Async );
-			bool frameGenerationPending =
+			// A queued frame belongs to the frame-generating focus.  Do not let it
+			// suppress painting after focus has moved to an ineligible window (most
+			// notably Steam while transitioning to Settings or Media).  That paint
+			// will reset the stale frame-generation queue in paint_all().
+			bool frameGenerationPending = bFrameGeneration &&
 				vulkan_frame_generation_has_pending_frame();
 			const uint64_t frameGenerationNow = get_time_in_nanos();
 
