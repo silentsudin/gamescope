@@ -2835,6 +2835,14 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 		g_bFSRActive = ( heldCommit->upscaledTexture->eFilter == GamescopeUpscaleFilter::FSR );
 	}
 
+	// Screenshots of the composition should use the real application layer, not
+	// a queued frame-generation scanout.  Apart from being the expected image to
+	// archive, this keeps screenshot command buffers from retaining framegen's
+	// scanout pool across focus changes (for example when opening Steam).
+	std::optional<FrameInfo_t> frameInfoWithoutFrameGeneration;
+	if ( gamescope::CScreenshotManager::Get().HasPendingScreenshot() )
+		frameInfoWithoutFrameGeneration = frameInfo;
+
 	const gamescope::FrameGenerationConfig frameGeneration = gamescope::GetFrameGenerationConfig();
 	const bool frameGenerationEligible = frameGeneration.enabled &&
 		steamcompmgr_window_allows_frame_generation( w ) &&
@@ -2928,11 +2936,17 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 		return;
 	}
 
-	std::optional<gamescope::GamescopeScreenshotInfo> oScreenshotInfo =
-		gamescope::CScreenshotManager::Get().ProcessPendingScreenshot();
+	std::optional<gamescope::GamescopeScreenshotInfo> oScreenshotInfo;
+	if ( frameInfoWithoutFrameGeneration )
+		oScreenshotInfo = gamescope::CScreenshotManager::Get().ProcessPendingScreenshot();
 
 	if ( oScreenshotInfo )
 	{
+		FrameInfo_t screenshotFrameInfo =
+			oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER
+				? frameInfo
+				: *frameInfoWithoutFrameGeneration;
+
 		std::filesystem::path path = std::filesystem::path{ oScreenshotInfo->szScreenshotPath };
 
 		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;
@@ -2951,8 +2965,8 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 		if ( pScreenshotTexture )
 		{
 			bool bHDRScreenshot = path.extension() == ".avif" &&
-								  frameInfo.layerCount > 0 &&
-								  ColorspaceIsHDR( frameInfo.layers[0].colorspace ) &&
+								  screenshotFrameInfo.layerCount > 0 &&
+								  ColorspaceIsHDR( screenshotFrameInfo.layers[0].colorspace ) &&
 								  oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER;
 
 			if ( drmCaptureFormat == DRM_FORMAT_NV12 || oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
@@ -2961,18 +2975,18 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 				{
 					auto& luts = bHDRScreenshot ? g_ScreenshotColorMgmtLutsHDR : g_ScreenshotColorMgmtLuts;
-					frameInfo.lut3D[nInputEOTF] = luts[nInputEOTF].vk_lut3d;
-					frameInfo.shaperLut[nInputEOTF] = luts[nInputEOTF].vk_lut1d;
+					screenshotFrameInfo.lut3D[nInputEOTF] = luts[nInputEOTF].vk_lut3d;
+					screenshotFrameInfo.shaperLut[nInputEOTF] = luts[nInputEOTF].vk_lut1d;
 				}
 
 				if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY )
 				{
 					// Remove everything but base planes from the screenshot.
-					for (int i = 0; i < frameInfo.layerCount; i++)
+					for (int i = 0; i < screenshotFrameInfo.layerCount; i++)
 					{
-						if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
+						if (screenshotFrameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
 						{
-							frameInfo.layerCount = i;
+							screenshotFrameInfo.layerCount = i;
 							break;
 						}
 					}
@@ -2982,11 +2996,11 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 					if ( is_mura_correction_enabled() )
 					{
 						// Remove the last layer which is for mura...
-						for (int i = 0; i < frameInfo.layerCount; i++)
+						for (int i = 0; i < screenshotFrameInfo.layerCount; i++)
 						{
-							if (frameInfo.layers[i].zpos >= (int)g_zposMuraCorrection)
+							if (screenshotFrameInfo.layers[i].zpos >= (int)g_zposMuraCorrection)
 							{
-								frameInfo.layerCount = i;
+								screenshotFrameInfo.layerCount = i;
 								break;
 							}
 						}
@@ -2994,10 +3008,10 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 				}
 
 				// Re-enable output color management (blending) if it was disabled by mura.
-				frameInfo.applyOutputColorMgmt = true;
+				screenshotFrameInfo.applyOutputColorMgmt = true;
 			}
 
-			frameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
+			screenshotFrameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
 
 			uint32_t uCompositeDebugBackup = g_uCompositeDebug;
 
@@ -3008,12 +3022,12 @@ paint_all(global_focus_t *pFocus, bool async, bool dpms, bool frameGenerationPre
 
 			std::optional<uint64_t> oScreenshotSeq;
 			if ( drmCaptureFormat == DRM_FORMAT_NV12 )
-				oScreenshotSeq = vulkan_composite( &frameInfo, pScreenshotTexture, false, nullptr );
+				oScreenshotSeq = vulkan_composite( &screenshotFrameInfo, pScreenshotTexture, false, nullptr );
 			else if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_FULL_COMPOSITION ||
 					  oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
-				oScreenshotSeq = vulkan_composite( &frameInfo, nullptr, false, pScreenshotTexture );
+				oScreenshotSeq = vulkan_composite( &screenshotFrameInfo, nullptr, false, pScreenshotTexture );
 			else
-				oScreenshotSeq = vulkan_screenshot( &frameInfo, pScreenshotTexture, nullptr );
+				oScreenshotSeq = vulkan_screenshot( &screenshotFrameInfo, pScreenshotTexture, nullptr );
 
 			if ( oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
 			{
@@ -6712,6 +6726,7 @@ static void
 steamcompmgr_exit(void)
 {
 	g_ImageWaiter.Shutdown();
+	vulkan_frame_generation_reset();
 
 	// Clean up any commits.
 	{
