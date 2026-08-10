@@ -883,6 +883,7 @@ public:
 	inline VkPipelineLayout pipelineLayout() {return m_pipelineLayout;}
 	inline int drmRenderFd() {return m_drmRendererFd;}
 	inline bool supportsModifiers() {return m_bSupportsModifiers;}
+	inline bool supportsClientDmabufs() {return m_bSupportsClientDmabufs;}
 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
 	inline bool supportsFp16() {return m_bSupportsFp16;}
@@ -957,6 +958,7 @@ protected:
 	uint32_t m_uVendorID = 0;
 	bool m_bHasDrmPrimaryDevId = false;
 	bool m_bSupportsModifiers = false;
+	bool m_bSupportsClientDmabufs = true;
 	bool m_bInitialized = false;
 
 

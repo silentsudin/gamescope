@@ -429,10 +429,27 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 		return false;
 	}
 
-	VkPhysicalDeviceProperties props;
-	vk.GetPhysicalDeviceProperties( m_physDev, &props );
+	VkPhysicalDeviceDriverProperties driverProps = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+	};
+	VkPhysicalDeviceProperties2 props2 = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+		.pNext = &driverProps,
+	};
+	vk.GetPhysicalDeviceProperties2( m_physDev, &props2 );
+	const VkPhysicalDeviceProperties &props = props2.properties;
 	m_uVendorID = props.vendorID;
 	vk_log.infof( "selecting physical device '%s': queue family %x (general queue family %x)", props.deviceName, m_queueFamily, m_generalQueueFamily );
+
+	// Venus currently aborts when importing DMA-BUFs from the guest's virtio-gpu
+	// device. Don't advertise the zero-copy client path there, so Wayland and
+	// Xwayland clients use wl_shm and Gamescope's existing upload path instead.
+	// Keep DMA-BUFs enabled for native drivers, where this is a critical fast path.
+	if ( driverProps.driverID == VK_DRIVER_ID_MESA_VENUS )
+	{
+		m_bSupportsClientDmabufs = false;
+		vk_log.infof( "Venus driver detected, disabling client DMA-BUF imports" );
+	}
 
 	return true;
 }
@@ -5210,6 +5227,9 @@ static const struct wlr_drm_format_set *renderer_get_texture_formats( struct wlr
 {
 	if (buffer_caps & WLR_BUFFER_CAP_DMABUF)
 	{
+		if ( !g_device.supportsClientDmabufs() )
+			return nullptr;
+
 		return &sampledDRMFormats;
 	}
 	else if (buffer_caps & WLR_BUFFER_CAP_DATA_PTR)
@@ -5340,7 +5360,11 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
-	texCreateFlags.bFlippable = true;
+	// When client DMA-BUFs are unavailable (currently Venus), this texture is
+	// an upload-only fallback. Exporting every upload for direct scanout is both
+	// unnecessary and rejected by virtio KMS; composition uses the internal
+	// Vulkan image directly. Native drivers retain the flippable fast path.
+	texCreateFlags.bFlippable = g_device.supportsClientDmabufs();
 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )
 		return nullptr;
 
