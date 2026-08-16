@@ -989,11 +989,6 @@ static void gamescope_swapchain_set_hdr_metadata( struct wl_client *client, stru
 			return;
 		}
 
-		// Check validity of this metadata,
-		// if it's garbage, just toss it...
-		if (!max_cll || !max_fall || (!white_point_x && !white_point_y))
-			return;
-
 		hdr_output_metadata metadata = {};
 		metadata.metadata_type = 0;
 
