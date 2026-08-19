@@ -4931,16 +4931,21 @@ namespace
 					// scRGB, so encode them into the display EOTF while writing the
 					// native 10-bit scanout.
 					if ( !hdrOutput )
+					{
 						generatedFrame.layers[0].colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
+						generatedFrame.layers[0].ctm = nullptr;
+					}
 					else
 					{
+						// The midpoint remains linear scRGB with Rec.709 primaries.
+						// Keep the source layer's 709 -> 2020 CTM when encoding it
+						// for the HDR scanout, matching the FSR and direct-scanout paths.
 						generatedFrame.applyOutputColorMgmt = true;
 						generatedFrame.outputEncodingEOTF = frameInfo->outputEncodingEOTF;
 					}
 					generatedFrame.layers[0].scale = { 1.0f, 1.0f };
 					generatedFrame.layers[0].offset = { 0.0f, 0.0f };
 					generatedFrame.layers[0].blackBorder = false;
-					generatedFrame.layers[0].ctm = nullptr;
 				}
 
 				if ( !m_completionTimeline )
@@ -5034,10 +5039,10 @@ namespace
 					{
 						// The target has the raw source extent. Composite the real frame
 						// one-to-one, then retain its original presentation scale below.
+						// Preserve the HDR source CTM just as the FSR path does.
 						realFrame.layers[0].scale = { 1.0f, 1.0f };
 						realFrame.layers[0].offset = { 0.0f, 0.0f };
 						realFrame.layers[0].blackBorder = false;
-						realFrame.layers[0].ctm = nullptr;
 					}
 
 					auto realCmdBuffer = g_device.commandBuffer();
