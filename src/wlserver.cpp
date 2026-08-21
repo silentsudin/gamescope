@@ -9,6 +9,7 @@
 #include <poll.h>
 #include <fcntl.h>
 #include <xf86drm.h>
+#include <xf86drmMode.h>
 #include <sys/eventfd.h>
 
 #include <linux/input-event-codes.h>
@@ -1754,6 +1755,21 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
 	nudge_steamcompmgr();
 }
 
+static void blank_kms_device( struct wlr_device *device )
+{
+	drmModeRes *resources = drmModeGetResources( device->fd );
+	if ( !resources )
+		return;
+
+	for ( int i = 0; i < resources->count_crtcs; i++ )
+	{
+		if ( drmModeSetCrtc( device->fd, resources->crtcs[i], 0, 0, 0, nullptr, 0, nullptr ) != 0 )
+			wl_log.errorf_errno( "Failed to blank unused KMS device" );
+	}
+
+	drmModeFreeResources( resources );
+}
+
 int wlsession_open_kms( const char *device_name ) {
 	if ( device_name != nullptr )
 	{
@@ -1761,19 +1777,27 @@ int wlsession_open_kms( const char *device_name ) {
 		if ( wlserver.wlr.device == nullptr )
 			return -1;
 	}
-	else
+
+	struct wlr_device *devices[8] = {};
+	ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 8, devices );
+	if ( n < 0 )
+		n = 0;
+
+	if ( wlserver.wlr.device == nullptr )
 	{
-		ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 1, &wlserver.wlr.device );
-		if ( n < 0 )
-		{
-			wl_log.errorf( "Failed to list GPUs" );
-			return -1;
-		}
 		if ( n == 0 )
 		{
 			wl_log.errorf( "No GPU detected" );
 			return -1;
 		}
+
+		wlserver.wlr.device = devices[0];
+	}
+
+	for ( ssize_t i = 0; i < n; i++ )
+	{
+		if ( devices[i]->dev != wlserver.wlr.device->dev )
+			blank_kms_device( devices[i] );
 	}
 
 	struct wl_listener *listener = new wl_listener();
