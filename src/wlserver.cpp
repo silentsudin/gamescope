@@ -77,6 +77,7 @@
 #include "gpuvis_trace_utils.h"
 
 #include <algorithm>
+#include <climits>
 #include <list>
 #include <set>
 
@@ -1770,7 +1771,7 @@ static void blank_kms_device( struct wlr_device *device )
 	drmModeFreeResources( resources );
 }
 
-int wlsession_open_kms( const char *device_name ) {
+int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector selector, const void *userdata ) {
 	if ( device_name != nullptr )
 	{
 		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
@@ -1791,7 +1792,27 @@ int wlsession_open_kms( const char *device_name ) {
 			return -1;
 		}
 
-		wlserver.wlr.device = devices[0];
+		int best_priority = INT_MAX;
+
+		for ( ssize_t i = 0; i < n; i++ )
+		{
+			int priority = selector ? selector( devices[i]->fd, userdata ) : 0;
+			if ( priority < best_priority )
+			{
+				best_priority = priority;
+				wlserver.wlr.device = devices[i];
+			}
+		}
+
+		if ( wlserver.wlr.device == nullptr )
+		{
+			wl_log.infof( "No connected KMS connector found; falling back to the first GPU" );
+			wlserver.wlr.device = devices[0];
+		}
+		else
+		{
+			wl_log.infof( "Selected KMS device with connector priority %d", best_priority );
+		}
 	}
 
 	for ( ssize_t i = 0; i < n; i++ )
