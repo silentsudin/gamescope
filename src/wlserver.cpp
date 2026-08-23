@@ -1613,6 +1613,8 @@ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle
 ///////////////////////
 
 #if HAVE_SESSION
+static void blank_unused_kms_devices();
+
 bool wlsession_active()
 {
 	return wlserver.wlr.session->active;
@@ -1620,6 +1622,9 @@ bool wlsession_active()
 
 static void handle_session_active( struct wl_listener *listener, void *data )
 {
+	if ( wlserver.wlr.session->active )
+		blank_unused_kms_devices();
+
 	GetBackend()->DirtyState( wlserver.wlr.session->active, wlserver.wlr.session->active );
 	wl_log.infof( "Session %s", wlserver.wlr.session->active ? "resumed" : "paused" );
 }
@@ -1748,6 +1753,8 @@ bool wlsession_init( void ) {
 
 #if HAVE_SESSION
 
+static std::vector<struct wlr_device *> s_kmsDevices;
+
 static void kms_device_handle_change( struct wl_listener *listener, void *data )
 {
 	GetBackend()->DirtyState();
@@ -1771,6 +1778,15 @@ static void blank_kms_device( struct wlr_device *device )
 	drmModeFreeResources( resources );
 }
 
+static void blank_unused_kms_devices()
+{
+	for ( struct wlr_device *device : s_kmsDevices )
+	{
+		if ( device->dev != wlserver.wlr.device->dev )
+			blank_kms_device( device );
+	}
+}
+
 int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector selector, const void *userdata ) {
 	if ( device_name != nullptr )
 	{
@@ -1783,6 +1799,7 @@ int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector s
 	ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 8, devices );
 	if ( n < 0 )
 		n = 0;
+	s_kmsDevices.assign( devices, devices + n );
 
 	if ( wlserver.wlr.device == nullptr )
 	{
@@ -1815,11 +1832,7 @@ int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector s
 		}
 	}
 
-	for ( ssize_t i = 0; i < n; i++ )
-	{
-		if ( devices[i]->dev != wlserver.wlr.device->dev )
-			blank_kms_device( devices[i] );
-	}
+	blank_unused_kms_devices();
 
 	struct wl_listener *listener = new wl_listener();
 	listener->notify = kms_device_handle_change;
@@ -1831,6 +1844,7 @@ int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector s
 void wlsession_close_kms()
 {
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+	s_kmsDevices.clear();
 }
 
 #endif
