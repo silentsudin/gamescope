@@ -1788,6 +1788,9 @@ static void blank_unused_kms_devices()
 }
 
 int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector selector, const void *userdata ) {
+	constexpr int k_nMaxRetries = 10;
+	constexpr unsigned int k_nRetryIntervalSeconds = 1;
+
 	if ( device_name != nullptr )
 	{
 		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
@@ -1796,19 +1799,29 @@ int wlsession_open_kms( const char *device_name, wlsession_kms_device_selector s
 	}
 
 	struct wlr_device *devices[8] = {};
-	ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 8, devices );
-	if ( n < 0 )
-		n = 0;
+	ssize_t n = 0;
+	for ( int nRetry = 0; ; nRetry++ )
+	{
+		n = wlr_session_find_gpus( wlserver.wlr.session, 8, devices );
+		if ( n < 0 )
+			n = 0;
+		if ( n > 0 || wlserver.wlr.device != nullptr )
+			break;
+
+		if ( nRetry == k_nMaxRetries )
+		{
+			wl_log.errorf( "No GPU detected after %d retries", k_nMaxRetries );
+			return -1;
+		}
+
+		wl_log.warnf( "No GPU detected; retrying in %u second (%d/%d)",
+			k_nRetryIntervalSeconds, nRetry + 1, k_nMaxRetries );
+		sleep( k_nRetryIntervalSeconds );
+	}
 	s_kmsDevices.assign( devices, devices + n );
 
 	if ( wlserver.wlr.device == nullptr )
 	{
-		if ( n == 0 )
-		{
-			wl_log.errorf( "No GPU detected" );
-			return -1;
-		}
-
 		int best_priority = INT_MAX;
 
 		for ( ssize_t i = 0; i < n; i++ )
