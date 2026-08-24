@@ -2142,13 +2142,24 @@ namespace gamescope
 			if (bGoodRefreshA != bGoodRefreshB)
 				return bGoodRefreshA;
 
+			// Some tvs may report 60hz as their preferred output even
+			// if they support 120hz. Prefer 120hz modes if available.
+			// Still honor preferred mode, above 120hz things might get
+			// funny, such as 360hz. Leave those for manual override.
+			// Only prefer 120hz if the resolution is high, fixes
+			// SuiPlay 0x1 having a weird 160hz mode at 800p
+			int nAreaA = a.hdisplay * a.vdisplay;
+			int nAreaB = b.hdisplay * b.vdisplay;
+			bGoodRefreshA = a.vrefresh >= 120;
+			bGoodRefreshB = b.vrefresh >= 120;
+			if (nAreaA > nAreaB && bGoodRefreshA && !bGoodRefreshB)
+				return true;
+
 			bool bPreferredA = a.type & DRM_MODE_TYPE_PREFERRED;
 			bool bPreferredB = b.type & DRM_MODE_TYPE_PREFERRED;
 			if (bPreferredA != bPreferredB)
 				return bPreferredA;
 
-			int nAreaA = a.hdisplay * a.vdisplay;
-			int nAreaB = b.hdisplay * b.vdisplay;
 			if (nAreaA != nAreaB)
 				return nAreaA > nAreaB;
 
