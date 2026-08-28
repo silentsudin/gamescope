@@ -7462,6 +7462,14 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	int fence = -1;
 	if ( newCommit != nullptr )
 	{
+		// KMS framebuffers already retain explicit release points for their scanout
+		// lifetime. Vulkan-only imports need the same ownership: keep the point on
+		// the commit and let the consuming AMD command buffer retain it to GPU
+		// completion before NVIDIA may reuse the source image.
+		gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb();
+		if ( !pBackendFb && reslistentry.pReleasePoint )
+			newCommit->SetReleasePoint( std::move( reslistentry.pReleasePoint ) );
+
 		global_focus_t *pCurrentFocus = GetCurrentFocus();
 
 		static bool bMangoappSocketDisable = env_to_bool( getenv( "GAMESCOPE_MANGOAPP_SOCKET_DISABLE" ));
@@ -7566,7 +7574,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			}
 		}
 
-		if ( gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb() )
+		if ( pBackendFb )
 		{
 			if ( reslistentry.pReleasePoint )
 				pBackendFb->SetReleasePoint( reslistentry.pReleasePoint );

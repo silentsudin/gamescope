@@ -1644,6 +1644,7 @@ void CVulkanCmdBuffer::reset()
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_device->recycleDescriptorSets( m_descriptorSets );
 	m_textureRefs.clear();
+	m_releasePointRefs.clear();
 	m_textureState.clear();
 
 	m_ExternalDependencies.clear();
@@ -1959,6 +1960,7 @@ void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
 	// no need to reimport if the image didn't change
 	if (!result.second)
 		return;
+	image->ReferenceReleasePoints( m_releasePointRefs );
 	// using the swapchain image as a source without writing to it doesn't make any sense
 	assert(image->outputImage() == false);
 	result.first->second.needsImport =
@@ -1972,6 +1974,7 @@ void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 	// no need to discard if the image is already image/in the correct layout
 	if (!result.second)
 		return;
+	image->ReferenceReleasePoints( m_releasePointRefs );
 	result.first->second.discarded = true;
 	result.first->second.needsImport =
 		image->queueFamily == external_queue_family( m_device );
@@ -2893,6 +2896,38 @@ int CVulkanTexture::memoryFence()
 	}
 
 	return fence;
+}
+
+void CVulkanTexture::AddReleasePoint( const std::shared_ptr<gamescope::CReleaseTimelinePoint> &pReleasePoint )
+{
+	if ( !pReleasePoint )
+		return;
+
+	std::lock_guard lock( m_ReleasePointMutex );
+	m_ReleasePoints.emplace_back( pReleasePoint );
+	m_bHasReleasePoints.store( true, std::memory_order_release );
+}
+
+void CVulkanTexture::ReferenceReleasePoints( std::vector<std::shared_ptr<gamescope::CReleaseTimelinePoint>> &references )
+{
+	if ( !m_bHasReleasePoints.load( std::memory_order_acquire ) )
+		return;
+
+	std::lock_guard lock( m_ReleasePointMutex );
+	for ( auto it = m_ReleasePoints.begin(); it != m_ReleasePoints.end(); )
+	{
+		if ( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint = it->lock() )
+		{
+			references.emplace_back( std::move( pReleasePoint ) );
+			++it;
+		}
+		else
+		{
+			it = m_ReleasePoints.erase( it );
+		}
+	}
+	if ( m_ReleasePoints.empty() )
+		m_bHasReleasePoints.store( false, std::memory_order_release );
 }
 
 static bool is_image_format_modifier_supported(VkFormat format, uint32_t drmFormat, uint64_t modifier)

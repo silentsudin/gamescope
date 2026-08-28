@@ -128,6 +128,13 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
+void commit_t::SetReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint )
+{
+	releasePoint = std::move( pReleasePoint );
+	if ( vulkanTex && releasePoint )
+		vulkanTex->AddReleasePoint( releasePoint );
+}
+
 void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
 
 bool commit_t::ShouldPreemptivelyUpscale()

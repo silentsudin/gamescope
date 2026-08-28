@@ -61,6 +61,7 @@ enum EStreamColorspace : int
 };
 
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 #include <atomic>
@@ -201,6 +202,8 @@ public:
 	}
 
 	int memoryFence();
+	void AddReleasePoint( const std::shared_ptr<gamescope::CReleaseTimelinePoint> &pReleasePoint );
+	void ReferenceReleasePoints( std::vector<std::shared_ptr<gamescope::CReleaseTimelinePoint>> &references );
 
 	CVulkanTexture( void );
 	~CVulkanTexture( void );
@@ -249,6 +252,13 @@ private:
 	EStreamColorspace m_streamColorspace = k_EStreamColorspace_Unknown;
 
 	struct wlr_dmabuf_attributes m_dmabuf = {};
+
+	// A memoized DMA-BUF texture may be recommitted with a new explicit-sync
+	// release point. Commits own these points; submitted command buffers take
+	// strong references through this weak association.
+	std::mutex m_ReleasePointMutex;
+	std::vector<std::weak_ptr<gamescope::CReleaseTimelinePoint>> m_ReleasePoints;
+	std::atomic<bool> m_bHasReleasePoints{ false };
 };
 
 struct vec2_t
@@ -1062,6 +1072,7 @@ private:
 
 	// Per Use State
 	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs;
+	std::vector<std::shared_ptr<gamescope::CReleaseTimelinePoint>> m_releasePointRefs;
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState;
 
 	// Draw State

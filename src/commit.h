@@ -37,9 +37,11 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits );
 
 	bool ShouldPreemptivelyUpscale();
+	void SetReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint );
 
 	struct wlr_buffer *buf = nullptr;
 	gamescope::Rc<CVulkanTexture> vulkanTex;
+	std::shared_ptr<gamescope::CReleaseTimelinePoint> releasePoint;
 	std::optional<UpscaledTexture_t> upscaledTexture;
 
 	gamescope::Rc<CVulkanTexture> GetTexture( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler, GamescopeAppTextureColorspace &colorspace )
