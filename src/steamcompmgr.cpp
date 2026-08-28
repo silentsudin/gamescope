@@ -9430,7 +9430,16 @@ steamcompmgr_main(int argc, char **argv)
 
 					case FlipType::VRR:
 					{
-						bShouldPaint = hasRepaint;
+						// Some KMS drivers stop producing vblanks when a VRR head is
+						// left without flips for long enough. Represent frames during
+						// a compositor freeze at a 10hz cadence
+						static constexpr uint64_t k_uVRRKeepaliveInterval = 100'000'000;
+						const uint64_t uNow = get_time_in_nanos();
+						const uint64_t uLastVBlank = GetVBlankTimer().GetLastVBlank();
+						const bool bKeepaliveDue = bIsVBlankFromTimer &&
+							uNow >= uLastVBlank + k_uVRRKeepaliveInterval;
+
+						bShouldPaint = hasRepaint || bKeepaliveDue;
 
 						if ( bIsVBlankFromTimer )
 						{
