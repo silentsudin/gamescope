@@ -1236,9 +1236,6 @@ void load_pnps(void)
 
 extern bool env_to_bool(const char *env);
 
-uint32_t g_uAlwaysSignalledSyncobj = 0;
-int g_nAlwaysSignalledSyncFile = -1;
-
 static void
 gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const char *fmt, va_list args)
 {
@@ -1320,18 +1317,7 @@ bool init_drm(struct drm_t *drm, int fd, int width, int height, int refresh)
 
 	uint64_t cap;
 	g_bSupportsSyncObjs = drmGetCap(drm->fd, DRM_CAP_SYNCOBJ, &cap) == 0 && cap != 0;
-	if ( g_bSupportsSyncObjs ) {
-		int err = drmSyncobjCreate(drm->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &g_uAlwaysSignalledSyncobj);
-		if (err < 0) {
-			drm_log.errorf("Failed to create dummy signalled syncobj");
-			return false;
-		}
-		err = drmSyncobjExportSyncFile(drm->fd, g_uAlwaysSignalledSyncobj, &g_nAlwaysSignalledSyncFile);
-		if (err < 0) {
-			drm_log.errorf("Failed to create dummy signalled sync file");
-			return false;
-		}
-	} else {
+	if ( !g_bSupportsSyncObjs ) {
 		drm_log.errorf("Syncobjs are not supported by the KMS driver");
 	}
 
@@ -2683,7 +2669,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				return -EINVAL;
 			}
 
-			int nFence = cv_drm_debug_disable_in_fence_fd ? -1 : g_nAlwaysSignalledSyncFile;
+			int nFence = -1;
 			if ( !cv_drm_debug_disable_in_fence_fd && pLayer->acquirePoint )
 			{
 				nFence = pLayer->acquirePoint->CreateSyncFile();
