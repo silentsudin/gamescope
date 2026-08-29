@@ -16,7 +16,7 @@
 #include "cs_ffx_frameinterpolation_midpoint.h"
 #include "cs_ffx_frameinterpolation_vector_field.h"
 #include "ffx_frameinterpolation_compute_inpainting_pyramid_pass.h"
-#include "ffx_frameinterpolation_inpainting_pass.h"
+#include "cs_ffx_frameinterpolation_inpainting.h"
 #include "ffx_opticalflow_compute_luminance_pyramid_pass.h"
 #include "ffx_opticalflow_compute_optical_flow_advanced_pass_v5.h"
 #include "ffx_opticalflow_compute_scd_divergence_pass.h"
@@ -647,8 +647,8 @@ namespace
 					Binding( 14, D::VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ), Binding( 15, D::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ),
 					Binding( 16, D::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ), Binding( 1000, D::VK_DESCRIPTOR_TYPE_SAMPLER ),
 				} ) &&
-				CreatePassBindings( inpaintingPass, ffx_frameinterpolation_inpainting_pass,
-					sizeof( ffx_frameinterpolation_inpainting_pass ), {
+				CreatePassBindings( inpaintingPass, cs_ffx_frameinterpolation_inpainting,
+					sizeof( cs_ffx_frameinterpolation_inpainting ), {
 					Binding( 0, D::VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ), Binding( 1, D::VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ),
 					Binding( 2, D::VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ), Binding( 3, D::VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ),
 					Binding( 7, D::VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ), Binding( 8, D::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ),

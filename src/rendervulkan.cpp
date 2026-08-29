@@ -4735,6 +4735,7 @@ namespace
 		bool useFSR = false;
 		std::shared_ptr<gamescope::CAcquireTimelinePoint> acquirePoint;
 		uint64_t outputId = 0;
+		uint64_t submissionSequence = 0;
 	};
 
 	static bool FrameGenerationSupportedFormat( VkFormat format )
@@ -4975,8 +4976,12 @@ namespace
 			}
 
 			const bool abDuplicate = vulkan_frame_generation_ab_enabled();
+			// Direct output is only final when this texture can itself be presented.
+			// Backend-allocated scanout requires a later sampling/composite pass and
+			// therefore must use the synchronized non-direct path below.
 			const bool directOutput =
 				!abDuplicate && !fsrEnabled && !ColorspaceIsHDR( realLayer.colorspace ) &&
+				!GetBackend()->UsesBackendAllocatedScanout() &&
 				vulkan_frame_generation_direct_output_enabled();
 			gamescope::Rc<CVulkanTexture> scanout;
 			if ( directOutput )
@@ -5117,10 +5122,43 @@ namespace
 					gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
 					return;
 				}
-				const uint64_t completionPoint = ++m_completionPoint;
-				cmdBuffer->AddSignal( m_completionTimeline->ToVkSemaphore(), completionPoint );
-				generated.acquirePoint = std::make_shared<gamescope::CAcquireTimelinePoint>(
-					m_completionTimeline, completionPoint );
+
+				// The FidelityFX passes use their own raw image barriers while the
+				// compositor uses CVulkanCmdBuffer's image-state tracker.  Keeping
+				// interpolation and composition in one command buffer can leave the
+				// midpoint's final storage write invisible to the composite.  Split at
+				// that API boundary and complete interpolation before recording any
+				// compositor work.  Direct output needs no second submission.
+				if ( !directOutput )
+				{
+					const uint64_t completionPoint = ++m_completionPoint;
+					auto compositeCommandBuffer = g_device.commandBuffer();
+					if ( !compositeCommandBuffer->AddSignal(
+							m_completionTimeline->ToVkSemaphore(), completionPoint ) )
+					{
+						gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
+						return;
+					}
+
+					const uint64_t interpolationSequence =
+						g_device.submit( std::move( cmdBuffer ) );
+					vulkan_wait( interpolationSequence, false );
+					cmdBuffer = std::move( compositeCommandBuffer );
+					generated.acquirePoint = std::make_shared<gamescope::CAcquireTimelinePoint>(
+						m_completionTimeline, completionPoint );
+				}
+				else
+				{
+					const uint64_t completionPoint = ++m_completionPoint;
+					if ( !cmdBuffer->AddSignal(
+							m_completionTimeline->ToVkSemaphore(), completionPoint ) )
+					{
+						gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
+						return;
+					}
+					generated.acquirePoint = std::make_shared<gamescope::CAcquireTimelinePoint>(
+						m_completionTimeline, completionPoint );
+				}
 
 				if ( directOutput )
 				{
@@ -5226,7 +5264,6 @@ namespace
 						gamescope::SetFrameGenerationStatus( gamescope::FrameGenerationStatus::UnsupportedGPU );
 						return;
 					}
-
 					real.layer.tex = realScanout;
 					if ( fsrEnabled )
 					{
@@ -5251,6 +5288,7 @@ namespace
 			}
 
 			vulkan_frame_generation_notify_submit( *sequence );
+			generated.submissionSequence = *sequence;
 			if ( !m_pipelinePrimed )
 			{
 				m_queue.push_back( m_previousReal );
@@ -5372,8 +5410,9 @@ namespace
 			if ( m_queue.empty() )
 				return;
 
-			if ( m_queue.front().generated && m_queue.front().acquirePoint &&
-				!m_queue.front().acquirePoint->Wait( 0 ) )
+			if ( m_queue.front().generated &&
+				 m_queue.front().submissionSequence != 0 &&
+				 !g_device.isComplete( m_queue.front().submissionSequence ) )
 			{
 				m_queue.pop_front();
 				m_telemetry.deadlineDroppedFrames++;

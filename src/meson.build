@@ -120,7 +120,6 @@ endforeach
 ffx_frameinterpolation_shader_names = [
   'ffx_frameinterpolation_optical_flow_vector_field_pass',
   'ffx_frameinterpolation_compute_inpainting_pyramid_pass',
-  'ffx_frameinterpolation_inpainting_pass',
 ]
 
 foreach shader_name : ffx_frameinterpolation_shader_names
@@ -138,6 +137,21 @@ foreach shader_name : ffx_frameinterpolation_shader_names
     depfile: shader_name + '.h.d',
   )
 endforeach
+
+ffx_inpainting_shader_name = 'cs_ffx_frameinterpolation_inpainting'
+ffx_spirv_shaders += custom_target(
+  ffx_inpainting_shader_name + '.h',
+  output: ffx_inpainting_shader_name + '.h',
+  command: [
+    glsl_compiler,
+    '-V', '--target-env', 'vulkan1.1', '-S', 'comp',
+    '-DFFX_GPU=1', '-DFFX_GLSL=1', '-I' + ffx_gpu_path,
+    meson.current_source_dir() / 'shaders' / (ffx_inpainting_shader_name + '.comp'),
+    '--vn', ffx_inpainting_shader_name, '-o', '@OUTPUT@',
+    '--depfile', '@DEPFILE@', '--quiet',
+  ],
+  depfile: ffx_inpainting_shader_name + '.h.d',
+)
 
 ffx_midpoint_shader_name = 'cs_ffx_frameinterpolation_midpoint'
 ffx_spirv_shaders += custom_target(
