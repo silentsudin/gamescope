@@ -7516,44 +7516,50 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
 			if ( pTempImage )
 			{
-				const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
+				const uint64_t ulNextReleasePoint = pTempImage->ulLastPoint + 1;
 
 				std::unique_ptr<CVulkanCmdBuffer> pCommandBuffer = g_device.commandBuffer();
-				
-				pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() );
-				pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint );
-
-				static std::optional<uint64_t> s_ulLastPreemptiveUpscaleSeqNo;
-
-				if ( s_ulLastPreemptiveUpscaleSeqNo )
+				if ( !pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() ) ||
+				     !pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint ) )
 				{
-					vulkan_wait( *s_ulLastPreemptiveUpscaleSeqNo, true );
+					bPreemptiveUpscale = false;
 				}
-
-				std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
-
-				if ( cv_upscale_preemptive_debug_force_sync )
+				else
 				{
-					vulkan_wait( *seqNo, true );
+					pTempImage->ulLastPoint = ulNextReleasePoint;
+
+					static std::optional<uint64_t> s_ulLastPreemptiveUpscaleSeqNo;
+
+					if ( s_ulLastPreemptiveUpscaleSeqNo )
+					{
+						vulkan_wait( *s_ulLastPreemptiveUpscaleSeqNo, true );
+					}
+
+					std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
+
+					if ( cv_upscale_preemptive_debug_force_sync )
+					{
+						vulkan_wait( *seqNo, true );
+					}
+
+					s_ulLastPreemptiveUpscaleSeqNo = seqNo;
+
+					newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
+					{
+						std::in_place_t{},
+						g_upscaleFilter,
+						g_upscaleScaler,
+						g_nOutputWidth,
+						g_nOutputHeight,
+						pTempImage->pTexture,
+						upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT,
+					};
+
+					// Manifest a new acquire timeline point with this inline work.
+					eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
+
+					//xwm_log.infof( "Pre-emptively upscaling!" );
 				}
-
-				s_ulLastPreemptiveUpscaleSeqNo = seqNo;
-
-				newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
-				{
-					std::in_place_t{},
-					g_upscaleFilter,
-					g_upscaleScaler,
-					g_nOutputWidth,
-					g_nOutputHeight,
-					pTempImage->pTexture,
-					upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT,
-				};
-
-				// Manifest a new acquire timeline point with this inline work.
-				eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
-
-				//xwm_log.infof( "Pre-emptively upscaling!" );
 			}
 			else
 			{

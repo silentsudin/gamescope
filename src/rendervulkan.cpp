@@ -1569,14 +1569,22 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 	return pSemaphore;
 }
 
-void CVulkanCmdBuffer::AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
+bool CVulkanCmdBuffer::AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
 {
+	if ( !pTimelineSemaphore )
+		return false;
+
 	m_ExternalDependencies.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
+	return true;
 }
 
-void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
+bool CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
 {
+	if ( !pTimelineSemaphore )
+		return false;
+
 	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
+	return true;
 }
 
 void CVulkanDevice::wait(uint64_t sequence, bool reset)

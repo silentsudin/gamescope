@@ -1057,8 +1057,8 @@ public:
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
 
-	void AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
-	void AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+	bool AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+	bool AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
 
 	const std::vector<VulkanTimelinePoint_t> &GetExternalDependencies() const { return m_ExternalDependencies; }
 	const std::vector<VulkanTimelinePoint_t> &GetExternalSignals() const { return m_ExternalSignals; }
