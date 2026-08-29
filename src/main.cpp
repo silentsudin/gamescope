@@ -815,6 +815,8 @@ int main(int argc, char **argv)
 					g_bDebugLayers = true;
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
 					g_bForceDisableColorMgmt = true;
+				} else if (strcmp(opt_name, "hdr-pq-internal-enable") == 0) {
+					disableInternalPq = false;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
