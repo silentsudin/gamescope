@@ -316,11 +316,16 @@ static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keys
 	struct wlr_keyboard *keyboard = ime->manager->server->wlr.virtual_keyboard_device;
 
 	struct xkb_keymap *keymap = keyboard->keymap;
+	xkb_layout_index_t active_layout = xkb_state_serialize_layout(keyboard->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE);
 	xkb_keycode_t min_keycode = xkb_keymap_min_keycode(keymap);
 	xkb_keycode_t max_keycode = xkb_keymap_max_keycode(keymap);
 	for (xkb_keycode_t keycode = min_keycode; keycode <= max_keycode; keycode++) {
 		xkb_layout_index_t num_layouts = xkb_keymap_num_layouts_for_key(keymap, keycode);
 		for (xkb_layout_index_t layout = 0; layout < num_layouts; layout++) {
+			if (layout != active_layout) {
+				continue;
+			}
+
 			xkb_level_index_t num_levels = xkb_keymap_num_levels_for_key(keymap, keycode, layout);
 			for (xkb_level_index_t level = 0; level < num_levels; level++) {
 				const xkb_keysym_t *syms = nullptr;
