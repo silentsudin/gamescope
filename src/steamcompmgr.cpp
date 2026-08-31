@@ -57,6 +57,7 @@
 #include <unordered_set>
 
 #include <assert.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -66,7 +67,19 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #if defined(__linux__)
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
 #include <sys/prctl.h>
+
+// Added in Linux 5.20. Keep building with older kernel headers.
+#if !defined(DMA_BUF_IOCTL_EXPORT_SYNC_FILE)
+struct dma_buf_export_sync_file
+{
+	__u32 flags;
+	__s32 fd;
+};
+#define DMA_BUF_IOCTL_EXPORT_SYNC_FILE _IOWR(DMA_BUF_BASE, 2, struct dma_buf_export_sync_file)
+#endif
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <sys/procctl.h>
 #endif
@@ -127,6 +140,34 @@ static const int g_nBaseCursorScale = 36;
 
 LogScope xwm_log("xwm");
 LogScope g_WaitableLog("waitable");
+
+static int export_dmabuf_read_sync_file( int dmabufFd )
+{
+#if defined(__linux__)
+	struct dma_buf_export_sync_file data = {
+		.flags = DMA_BUF_SYNC_READ,
+		.fd = -1,
+	};
+
+	int ret;
+	do
+	{
+		ret = ioctl( dmabufFd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &data );
+	}
+	while ( ret != 0 && ( errno == EINTR || errno == EAGAIN ) );
+
+	if ( ret != 0 )
+	{
+		xwm_log.errorf_errno( "DMA_BUF_IOCTL_EXPORT_SYNC_FILE failed" );
+		return -1;
+	}
+
+	return data.fd;
+#else
+	xwm_log.errorf( "DMA-BUF sync_file export is unsupported on this platform" );
+	return -1;
+#endif
+}
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
 
@@ -7605,7 +7646,10 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			struct wlr_dmabuf_attributes dmabuf = {0};
 			if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 			{
-				fence = dup( dmabuf.fd[0] );
+				// A DMA-BUF FD is memory, not a pollable completion fence. Export
+				// the producer's implicit read dependency as a sync_file when no
+				// explicit acquire point was available.
+				fence = export_dmabuf_read_sync_file( dmabuf.fd[0] );
 			}
 			else if ( !g_device.supportsClientDmabufs() )
 			{
@@ -7621,15 +7665,31 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		}
 
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+		bool bCommitPending = true;
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
 			if ( bKnownReady )
 				newCommit->Signal();
-			else
-				g_ImageWaiter.AddWaitable( newCommit.get() );
+			else if ( fence < 0 )
+			{
+				xwm_log.errorf( "Dropping commit %" PRIu64 ": no valid acquire fence", newCommit->commitID );
+				bCommitPending = false;
+			}
+			else if ( !g_ImageWaiter.AddWaitable( newCommit.get() ) )
+			{
+				xwm_log.errorf( "Dropping commit %" PRIu64 ": failed to subscribe to acquire fence", newCommit->commitID );
+				bCommitPending = false;
+			}
 		}
 
-		w->commit_queue.push_back( std::move(newCommit) );
+		if ( bCommitPending )
+			w->commit_queue.push_back( std::move(newCommit) );
+		else
+		{
+			// The commit was never consumed. Destroying it releases its explicit
+			// release point and wl_buffer so the producer can keep progressing.
+			w->receivedDoneCommit = true;
+		}
 	}
 }
 
