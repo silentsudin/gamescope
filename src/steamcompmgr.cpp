@@ -4961,15 +4961,24 @@ get_appid_from_pid_environ( pid_t pid )
 		return 0;
 
 	constexpr std::string_view sSteamAppIdPrefix = "SteamAppId=";
+	constexpr std::string_view sSteamCompatAppIdPrefix = "STEAM_COMPAT_APP_ID=";
 	std::string variable;
 
 	while ( std::getline( proc_environ_file, variable, '\0' ) )
 	{
 		std::string_view value = variable;
-		if ( !value.starts_with( sSteamAppIdPrefix ) )
+		if ( value.starts_with( sSteamAppIdPrefix ) )
+		{
+			value.remove_prefix( sSteamAppIdPrefix.length() );
+		}
+		else if ( value.starts_with( sSteamCompatAppIdPrefix ) )
+		{
+			value.remove_prefix( sSteamCompatAppIdPrefix.length() );
+		}
+		else
+		{
 			continue;
-
-		value.remove_prefix( sSteamAppIdPrefix.length() );
+		}
 
 		uint32_t unAppId = 0;
 		auto [ ptr, error ] = std::from_chars( value.data(), value.data() + value.length(), unAppId );
@@ -4984,19 +4993,17 @@ uint32_t
 get_appid_from_pid( pid_t pid )
 {
 	uint32_t unFoundAppId = 0;
-	uint32_t unEnvironmentAppId = 0;
 
 	char filename[256];
 	pid_t next_pid = pid;
 
 	while ( 1 )
 	{
-		// SteamAppId survives the Flatpak portal subsandbox boundary even though
-		// the game's process ancestry no longer reaches Steam's reaper process.
-		// Keep the nearest non-zero value only as a fallback so the established
-		// reaper-based lookup remains authoritative.
-		if ( unEnvironmentAppId == 0 )
-			unEnvironmentAppId = get_appid_from_pid_environ( next_pid );
+		// SteamAppId and STEAM_COMPAT_APP_ID are authoritative when present.
+		// They can survive the Flatpak portal subsandbox boundary even though the
+		// game's process ancestry no longer reaches Steam's reaper process.
+		if ( uint32_t unEnvironmentAppId = get_appid_from_pid_environ( next_pid ) )
+			return unEnvironmentAppId;
 
 		snprintf( filename, sizeof( filename ), "/proc/%i/stat", next_pid );
 		std::ifstream proc_stat_file( filename );
@@ -5077,7 +5084,7 @@ get_appid_from_pid( pid_t pid )
 		}
 	}
 
-	return unFoundAppId != 0 ? unFoundAppId : unEnvironmentAppId;
+	return unFoundAppId;
 }
 
 static pid_t

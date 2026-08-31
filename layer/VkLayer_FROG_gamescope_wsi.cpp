@@ -86,6 +86,9 @@ namespace GamescopeWSILayer {
   uint32_t clientAppId() {
     const char *appid = getenv("SteamAppId");
     if (!appid || !*appid)
+      appid = getenv("STEAM_COMPAT_APP_ID");
+
+    if (!appid || !*appid)
       return 0;
 
     return atoi(appid);
