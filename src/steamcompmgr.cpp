@@ -7020,7 +7020,9 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
 			w->commit_queue[ j ]->done = true;
 			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;
-			w->commit_queue[ j ]->present_margin = earliestPresentTime - earliestLatchTime;
+			w->commit_queue[ j ]->present_margin = earliestPresentTime > earliestLatchTime
+				? earliestPresentTime - earliestLatchTime
+				: 0;
 			bFoundWindow = true;
 
 			// Window just got a new available commit, determine if that's worth a repaint
@@ -7110,7 +7112,8 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+	uint64_t now = get_time_in_nanos();
+	uint64_t next_refresh_time = std::max( g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank, now );
 
 	// commits that were not ready to be presented based on their display timing.
 	static std::vector< CommitDoneEntry_t > commits_before_their_time;
@@ -7121,8 +7124,6 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	static std::unordered_set< uint64_t > fifo_win_seqs;
 	fifo_win_seqs.clear();
 	fifo_win_seqs.reserve( 32 );
-
-	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
@@ -7184,7 +7185,8 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 {
 	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+	uint64_t now = get_time_in_nanos();
+	uint64_t next_refresh_time = std::max( g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank, now );
 
 	// commits that were not ready to be presented based on their display timing.
 	static std::vector< CommitDoneEntry_t > commits_before_their_time;
@@ -7195,8 +7197,6 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 	static std::unordered_set< uint64_t > fifo_win_seqs;
 	fifo_win_seqs.clear();
 	fifo_win_seqs.reserve( 32 );
-
-	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
@@ -7260,7 +7260,7 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 {
 	// wlserver_lock is held.
 
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+	uint64_t next_refresh_time = std::max( g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank, get_time_in_nanos() );
 
 	const bool frameGenerationOverlay =
 		steamcompmgr_window_is_active_frame_generation_overlay( w );
