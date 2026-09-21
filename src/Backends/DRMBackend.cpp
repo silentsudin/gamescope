@@ -3619,6 +3619,7 @@ namespace gamescope
 
 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
 		{
+			const FrameInfo_t *pUnprocessedFrameInfo = pFrameInfo;
 			static uint64_t s_ulLastTime = get_time_in_nanos();
 			uint64_t ulNow = get_time_in_nanos();
 			drm_log.debugf( "CDRMBackend::Present Begin: %lu -> delta: %lu", ulNow, ulNow - s_ulLastTime );
@@ -3694,9 +3695,9 @@ namespace gamescope
 					scanoutBaseLayer.colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 					scanoutBaseLayer.eAlphaBlendingMode = ALPHA_BLENDING_MODE_NONE;
 
-					// From here, normal plane assignment can scan out the FSR result and
-					// keep compatible overlays and the cursor on hardware planes. If it
-					// fails, the compositor reuses this base without executing FSR again.
+					// Normal plane assignment can scan out the FSR result with compatible
+					// overlays and the cursor on hardware planes. Full composition must
+					// use the original frame because output images cannot be sampled.
 					pFrameInfo = &fsrScanoutFrameInfo;
 				}
 			}
@@ -3815,6 +3816,9 @@ namespace gamescope
 					}
 				}
 			}
+
+			if ( bNeedsFullComposite && pFrameInfo == &fsrScanoutFrameInfo )
+				compositeFrameInfo = *pUnprocessedFrameInfo;
 
 			// If we ever promoted from partial -> full, for the first frame
 			// do NOT defer this partial composition.
