@@ -3555,26 +3555,35 @@ namespace gamescope
 				return false;
 			}
 
+			// PCI IDs only help prefer the Vulkan device associated with this KMS
+			// device. Platform DRM devices do not have them and are still valid.
 			struct stat fd_stat = {};
-			if ( fstat( kms_fd, &fd_stat ) != 0 )
+			if ( fstat( kms_fd, &fd_stat ) == 0 )
 			{
-				drm_log.errorf_errno( "Failed to identify selected KMS device" );
-				return false;
-			}
-
-			drmDevice *drm_device = nullptr;
-			if ( drmGetDeviceFromDevId( fd_stat.st_rdev, 0, &drm_device ) != 0 ||
-			     drm_device->bustype != DRM_BUS_PCI || !drm_device->deviceinfo.pci )
-			{
-				drm_log.errorf( "Selected KMS device has no PCI identity" );
+				drmDevice *drm_device = nullptr;
+				if ( drmGetDeviceFromDevId( fd_stat.st_rdev, 0, &drm_device ) == 0 && drm_device )
+				{
+					if ( drm_device->bustype == DRM_BUS_PCI && drm_device->deviceinfo.pci )
+					{
+						g_preferVendorID = drm_device->deviceinfo.pci->vendor_id;
+						g_preferDeviceID = drm_device->deviceinfo.pci->device_id;
+					}
+					else
+					{
+						drm_log.infof( "Selected KMS device has no PCI identity; skipping KMS PCI preference" );
+					}
+				}
+				else
+				{
+					drm_log.warnf( "Could not identify selected KMS device; skipping KMS PCI preference" );
+				}
 				if ( drm_device )
 					drmFreeDevice( &drm_device );
-				return false;
 			}
-
-			g_preferVendorID = drm_device->deviceinfo.pci->vendor_id;
-			g_preferDeviceID = drm_device->deviceinfo.pci->device_id;
-			drmFreeDevice( &drm_device );
+			else
+			{
+				drm_log.warnf( "Could not stat selected KMS device; skipping KMS PCI preference" );
+			}
 
 			if ( !vulkan_init( vulkan_get_instance(), VK_NULL_HANDLE ) )
 			{
