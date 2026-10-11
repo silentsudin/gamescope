@@ -421,6 +421,9 @@ namespace gamescope
 			return bChanged;
 		}
 
+		void FillPanelHDRMetadata( hdr_metadata_infoframe *pInfoframe ) const;
+		gamescope::BackendBlob *GetAppHDRMetadata( const std::shared_ptr<gamescope::BackendBlob> &pAppMetadata );
+
 		bool SupportsHDR10() const
 		{
 			return !!GetProperties().Colorspace && !!GetProperties().HDR_OUTPUT_METADATA && GetHDRInfo().IsHDR10();
@@ -545,6 +548,9 @@ namespace gamescope
 		} m_Mutable;
 
 		GamescopePanelOrientation m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
+
+		std::weak_ptr<gamescope::BackendBlob> m_pLastAppHDRMetadata;
+		std::shared_ptr<gamescope::BackendBlob> m_pFilledAppHDRMetadata;
 
 		ConnectorProperties m_Props;
 	};
@@ -2616,8 +2622,61 @@ namespace gamescope
 			pInfoframe->eotf = HDMI_EOTF_ST2084;
 			pInfoframe->metadata_type = 0;
 
+			// Internal panels (e.g. the SDC AMS881KB01 OLED in the Legion Go 2 and
+			// OneXPlayer 3) tone map in the panel TCON from the content light
+			// levels. Zero (unknown) values make them crush/blow out highlights
+			// and wash out colors. Describe content that fits the panel instead,
+			// so the panel shows PQ as is.
+			if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )
+				FillPanelHDRMetadata( pInfoframe );
+
 			m_Mutable.HDR.pDefaultMetadataBlob = GetBackend()->CreateBackendBlob( defaultHDRMetadata );
 		}
+	}
+
+	void CDRMConnector::FillPanelHDRMetadata( hdr_metadata_infoframe *pInfoframe ) const
+	{
+		const displaycolorimetry_t &colorimetry = m_Mutable.DisplayColorimetry;
+
+		if ( !pInfoframe->display_primaries[0].x && !pInfoframe->display_primaries[0].y &&
+			 !pInfoframe->white_point.x && !pInfoframe->white_point.y )
+		{
+			pInfoframe->display_primaries[0].x = color_xy_to_u16( colorimetry.primaries.r.x );
+			pInfoframe->display_primaries[0].y = color_xy_to_u16( colorimetry.primaries.r.y );
+			pInfoframe->display_primaries[1].x = color_xy_to_u16( colorimetry.primaries.g.x );
+			pInfoframe->display_primaries[1].y = color_xy_to_u16( colorimetry.primaries.g.y );
+			pInfoframe->display_primaries[2].x = color_xy_to_u16( colorimetry.primaries.b.x );
+			pInfoframe->display_primaries[2].y = color_xy_to_u16( colorimetry.primaries.b.y );
+			pInfoframe->white_point.x = color_xy_to_u16( colorimetry.white.x );
+			pInfoframe->white_point.y = color_xy_to_u16( colorimetry.white.y );
+		}
+
+		if ( !pInfoframe->max_display_mastering_luminance )
+			pInfoframe->max_display_mastering_luminance = m_Mutable.HDR.uMaxContentLightLevel;
+		if ( !pInfoframe->min_display_mastering_luminance )
+			pInfoframe->min_display_mastering_luminance = m_Mutable.HDR.uMinContentLightLevel;
+		if ( !pInfoframe->max_cll )
+			pInfoframe->max_cll = m_Mutable.HDR.uMaxContentLightLevel;
+		if ( !pInfoframe->max_fall )
+			pInfoframe->max_fall = m_Mutable.HDR.uMaxFrameAverageLuminance;
+	}
+
+	gamescope::BackendBlob *CDRMConnector::GetAppHDRMetadata( const std::shared_ptr<gamescope::BackendBlob> &pAppMetadata )
+	{
+		if ( GetScreenType() != GAMESCOPE_SCREEN_TYPE_INTERNAL )
+			return pAppMetadata.get();
+
+		if ( m_pLastAppHDRMetadata.lock() == pAppMetadata && m_pFilledAppHDRMetadata )
+			return m_pFilledAppHDRMetadata.get();
+
+		// Apps often leave parts of the metadata zero (unknown). Fill those
+		// in from the panel, see FillPanelHDRMetadata.
+		hdr_output_metadata metadata = pAppMetadata->View<hdr_output_metadata>();
+		FillPanelHDRMetadata( &metadata.hdmi_metadata_type1 );
+
+		m_pLastAppHDRMetadata = pAppMetadata;
+		m_pFilledAppHDRMetadata = GetBackend()->CreateBackendBlob( metadata );
+		return m_pFilledAppHDRMetadata.get();
 	}
 
 	/////////////////////////
@@ -2962,7 +3021,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			wlserver_vk_swapchain_feedback* pFeedback = steamcompmgr_get_base_layer_swapchain_feedback();
 			if ( pFeedback && pFeedback->hdr_metadata_blob != nullptr )
-				pHDRMetadata = pFeedback->hdr_metadata_blob.get();
+				pHDRMetadata = drm->pConnector->GetAppHDRMetadata( pFeedback->hdr_metadata_blob );
 			uColorimetry = DRM_MODE_COLORIMETRY_BT2020_RGB;
 		}
 		else
