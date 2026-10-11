@@ -88,6 +88,51 @@ namespace gamescope
         return ceilf((logf(nits / 50.0f) / logf(2.0f)) * 32.0f);
     }
 
+    // Older libdisplay-info versions (e.g. the one bundled by DXVK) reject
+    // EDIDs with DisplayID 2.0 extension blocks entirely, and games then get
+    // made up HDR metadata (1499 nits peak, P3 primaries) instead of the
+    // panel's. Everything we hand to games is in the base and CTA blocks, so
+    // drop DisplayID extensions from the EDID that we expose.
+    static bool strip_displayid_extensions( std::vector<uint8_t> &edid )
+    {
+        static constexpr uint8_t DISPLAYID_EXT_TAG = 0x70;
+        static constexpr uint8_t BLOCK_MAP_EXT_TAG = 0xF0;
+
+        if ( edid.size() < 2 * EDID_BLOCK_SIZE || edid.size() % EDID_BLOCK_SIZE != 0 )
+            return false;
+
+        std::vector<uint8_t> stripped( edid.begin(), edid.begin() + EDID_BLOCK_SIZE );
+        uint32_t uExtCount = uint32_t( edid.size() / EDID_BLOCK_SIZE ) - 1;
+        bool bStripped = false;
+
+        for ( uint32_t i = 1; i <= uExtCount; i++ )
+        {
+            const uint8_t *ext_data = &edid[i * EDID_BLOCK_SIZE];
+
+            // Removing blocks would invalidate a block map, leave those alone.
+            if ( ext_data[0] == BLOCK_MAP_EXT_TAG )
+                return false;
+
+            if ( ext_data[0] == DISPLAYID_EXT_TAG )
+            {
+                bStripped = true;
+                continue;
+            }
+
+            stripped.insert( stripped.end(), ext_data, ext_data + EDID_BLOCK_SIZE );
+        }
+
+        if ( !bStripped )
+            return false;
+
+        stripped[0x7E] = uint8_t( stripped.size() / EDID_BLOCK_SIZE - 1 );
+        patch_edid_checksum( &stripped[0] );
+
+        edid_log.infof( "Stripped DisplayID extension blocks (%zu -> %zu bytes)", edid.size(), stripped.size() );
+        edid = std::move( stripped );
+        return true;
+    }
+
     std::optional<std::vector<uint8_t>> PatchEdid( std::span<const uint8_t> pEdid, const BackendConnectorHDRInfo &hdrInfo, bool bRotate )
     {
         // A zero length indicates that the edid parsing failed.
@@ -95,6 +140,8 @@ namespace gamescope
             return std::nullopt;
 
         std::vector<uint8_t> edid( pEdid.begin(), pEdid.end() );
+
+        bool bStrippedDisplayID = strip_displayid_extensions( edid );
 
         if ( bRotate )
         {
@@ -124,7 +171,7 @@ namespace gamescope
         // an external display attached.
         // (Allows for debugging undocked fallback without undocking/redocking)
         if ( !hdrInfo.ShouldPatchEDID() )
-            return bRotate ? std::optional( edid ) : std::nullopt;
+            return ( bRotate || bStrippedDisplayID ) ? std::optional( edid ) : std::nullopt;
 
         // TODO: Allow for override of min luminance
 #if 0
